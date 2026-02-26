@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/sigumaa/yururi/internal/config"
 )
 
 func TestNormalizeMethod(t *testing.T) {
@@ -17,21 +19,9 @@ func TestNormalizeMethod(t *testing.T) {
 		input  string
 		expect string
 	}{
-		{
-			name:   "snake_case",
-			input:  "agent_message_delta",
-			expect: "agent_message_delta",
-		},
-		{
-			name:   "slash and camelCase",
-			input:  "item/agentMessage/delta",
-			expect: "item_agent_message_delta",
-		},
-		{
-			name:   "slash",
-			input:  "turn/completed",
-			expect: "turn_completed",
-		},
+		{name: "snake_case", input: "agent_message_delta", expect: "agent_message_delta"},
+		{name: "slash and camelCase", input: "item/agentMessage/delta", expect: "item_agent_message_delta"},
+		{name: "slash", input: "turn/completed", expect: "turn_completed"},
 	}
 
 	for _, tc := range tests {
@@ -46,312 +36,114 @@ func TestNormalizeMethod(t *testing.T) {
 	}
 }
 
-func TestIsAgentMessageDeltaMethod(t *testing.T) {
+func TestThreadStartParamsIncludesMCPConfig(t *testing.T) {
 	t.Parallel()
 
-	if !isAgentMessageDeltaMethod(normalizeMethod("agent_message_delta")) {
-		t.Fatal("isAgentMessageDeltaMethod(agent_message_delta) = false, want true")
+	input := TurnInput{
+		BaseInstructions:      "base",
+		DeveloperInstructions: "dev",
 	}
-	if !isAgentMessageDeltaMethod(normalizeMethod("item/agentMessage/delta")) {
-		t.Fatal("isAgentMessageDeltaMethod(item/agentMessage/delta) = false, want true")
-	}
-	if isAgentMessageDeltaMethod(normalizeMethod("turn/completed")) {
-		t.Fatal("isAgentMessageDeltaMethod(turn/completed) = true, want false")
-	}
-}
+	params := threadStartParams(input, "gpt-5.3-codex", "/tmp/work", "medium", "http://127.0.0.1:39393/mcp")
 
-func TestTurnTextAggregatorItemCompletedExtractsAgentMessageText(t *testing.T) {
-	t.Parallel()
-
-	aggregator := newTurnTextAggregator()
-	aggregator.consume(normalizeMethod("item/completed"), decodeTestNotificationParams(t, `{"item":{"type":"agentMessage","text":"{\"action\":\"noop\"}"}}`))
-
-	if got := aggregator.FinalText(); got != `{"action":"noop"}` {
-		t.Fatalf("turnTextAggregator.FinalText() = %q, want %q", got, `{"action":"noop"}`)
-	}
-}
-
-func TestTurnTextAggregatorItemCompletedIgnoresUserMessage(t *testing.T) {
-	t.Parallel()
-
-	aggregator := newTurnTextAggregator()
-	aggregator.consume(normalizeMethod("item/completed"), decodeTestNotificationParams(t, `{"item":{"type":"userMessage","text":"{\"action\":\"reply\",\"content\":\"no\"}"}}`))
-
-	if got := aggregator.FinalText(); got != "" {
-		t.Fatalf("turnTextAggregator.FinalText() = %q, want empty", got)
-	}
-}
-
-func TestTurnTextAggregatorAgentMessageDeltaUsesStringOnly(t *testing.T) {
-	t.Parallel()
-
-	aggregator := newTurnTextAggregator()
-	method := normalizeMethod("item/agentMessage/delta")
-
-	aggregator.consume(method, decodeTestNotificationParams(t, `{"delta":"foo"}`))
-	aggregator.consume(method, decodeTestNotificationParams(t, `{"delta":123}`))
-	aggregator.consume(method, decodeTestNotificationParams(t, `{"delta":{"text":"ignored"}}`))
-	aggregator.consume(method, decodeTestNotificationParams(t, `{"delta":"bar"}`))
-
-	if got := aggregator.FinalText(); got != "foobar" {
-		t.Fatalf("turnTextAggregator.FinalText() = %q, want %q", got, "foobar")
-	}
-}
-
-func TestTurnTextAggregatorFinalTextPrefersAgentMessageAfterTurnCompleted(t *testing.T) {
-	t.Parallel()
-
-	aggregator := newTurnTextAggregator()
-	aggregator.consume(normalizeMethod("item/agentMessage/delta"), decodeTestNotificationParams(t, `{"delta":"from-delta"}`))
-	aggregator.consume(normalizeMethod("item/completed"), decodeTestNotificationParams(t, `{"item":{"type":"agentMessage","text":"from-item"}}`))
-	aggregator.consume(normalizeMethod("turn/completed"), decodeTestNotificationParams(t, `{"output":{"text":"from-turn"}}`))
-
-	if !aggregator.Completed() {
-		t.Fatal("turnTextAggregator.Completed() = false, want true")
-	}
-	if got := aggregator.FinalText(); got != "from-item" {
-		t.Fatalf("turnTextAggregator.FinalText() = %q, want %q", got, "from-item")
-	}
-}
-
-func TestThreadStartParams(t *testing.T) {
-	t.Parallel()
-
-	params := threadStartParams("dev-instructions", "gpt-5.3-codex")
-	if got := params["approvalPolicy"]; got != "never" {
-		t.Fatalf("threadStartParams().approvalPolicy = %v, want never", got)
-	}
-	if got := params["sandbox"]; got != "workspace-write" {
-		t.Fatalf("threadStartParams().sandbox = %v, want workspace-write", got)
-	}
-	if got := params["developerInstructions"]; got != "dev-instructions" {
-		t.Fatalf("threadStartParams().developerInstructions = %v, want dev-instructions", got)
-	}
-	if got := params["model"]; got != "gpt-5.3-codex" {
-		t.Fatalf("threadStartParams().model = %v, want gpt-5.3-codex", got)
-	}
-}
-
-func TestThreadStartParamsOmitsModelWhenEmpty(t *testing.T) {
-	t.Parallel()
-
-	params := threadStartParams("dev-instructions", "")
-	if _, ok := params["model"]; ok {
-		t.Fatalf("threadStartParams() unexpectedly contains model: %#v", params)
-	}
-}
-
-func TestBuildDeveloperInstructions(t *testing.T) {
-	t.Parallel()
-
-	owner := buildDeveloperInstructions(true)
-	nonOwner := buildDeveloperInstructions(false)
-
-	if !strings.Contains(owner, "可愛い女子大生メイド") {
-		t.Fatalf("buildDeveloperInstructions(true) missing persona: %q", owner)
-	}
-	if !strings.Contains(owner, `actionは"noop"または"reply"のみ`) {
-		t.Fatalf("buildDeveloperInstructions(true) missing action rule: %q", owner)
-	}
-	if !strings.Contains(nonOwner, `actionは"noop"または"reply"のみ`) {
-		t.Fatalf("buildDeveloperInstructions(false) missing action rule: %q", nonOwner)
-	}
-	if !strings.Contains(owner, "直接呼びかけ") {
-		t.Fatalf("buildDeveloperInstructions(true) missing direct call policy: %q", owner)
-	}
-	if !strings.Contains(owner, "owner_user_idなので少し甘め") {
-		t.Fatalf("buildDeveloperInstructions(true) missing owner tone: %q", owner)
-	}
-	if strings.Contains(nonOwner, "owner_user_idなので少し甘め") {
-		t.Fatalf("buildDeveloperInstructions(false) unexpectedly contains owner tone: %q", nonOwner)
-	}
-	if !strings.Contains(nonOwner, "通常トーン") {
-		t.Fatalf("buildDeveloperInstructions(false) missing non-owner tone: %q", nonOwner)
-	}
-}
-
-func TestBuildPromptContainsFactsOnly(t *testing.T) {
-	t.Parallel()
-
-	prompt := buildPrompt(TurnInput{
-		AuthorID: "user-1",
-		Content:  "こんにちは",
-		IsOwner:  true,
-	})
-
-	if !strings.Contains(prompt, "user_id: user-1") {
-		t.Fatalf("buildPrompt() missing user_id: %q", prompt)
-	}
-	if !strings.Contains(prompt, "is_owner: true") {
-		t.Fatalf("buildPrompt() missing is_owner fact: %q", prompt)
-	}
-	if !strings.Contains(prompt, "こんにちは") {
-		t.Fatalf("buildPrompt() missing message content: %q", prompt)
-	}
-	if strings.Contains(prompt, `actionは"noop"または"reply"のみ`) {
-		t.Fatalf("buildPrompt() unexpectedly contains JSON action rule: %q", prompt)
-	}
-	if strings.Contains(prompt, "JSON文字列のみ") {
-		t.Fatalf("buildPrompt() unexpectedly contains JSON constraint: %q", prompt)
-	}
-}
-
-func TestParseDecisionOrNoop(t *testing.T) {
-	t.Parallel()
-
-	got, err := parseDecisionOrNoop(" \n\t ")
-	if err != nil {
-		t.Fatalf("parseDecisionOrNoop(empty) error = %v, want nil", err)
-	}
-	if got != (Decision{Action: "noop"}) {
-		t.Fatalf("parseDecisionOrNoop(empty) = %+v, want %+v", got, Decision{Action: "noop"})
-	}
-}
-
-func TestIsDirectCall(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		content string
-		want    bool
-	}{
-		{
-			name:    "hiragana",
-			content: "ゆるり、ちょっと来て",
-			want:    true,
-		},
-		{
-			name:    "ascii",
-			content: "hey yururi",
-			want:    true,
-		},
-		{
-			name:    "not direct call",
-			content: "こんにちは",
-			want:    false,
-		},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := isDirectCall(tc.content)
-			if got != tc.want {
-				t.Fatalf("isDirectCall(%q) = %v, want %v", tc.content, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestRunTurnReturnsNoopWhenFinalTextIsEmpty(t *testing.T) {
-	t.Setenv("YURURI_MOCK_CODEX_HELPER", "1")
-
-	client := &Client{
-		command: os.Args[0],
-		args:    []string{"-test.run=^TestMockCodexProcess$", "--", "turn-completed-empty"},
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	got, err := client.RunTurn(ctx, TurnInput{
-		AuthorID: "user-1",
-		Content:  "ping",
-		IsOwner:  false,
-	})
-	if err != nil {
-		t.Fatalf("RunTurn() error = %v", err)
-	}
-	if got != (Decision{Action: "noop"}) {
-		t.Fatalf("RunTurn() = %+v, want %+v", got, Decision{Action: "noop"})
-	}
-}
-
-func TestRunTurnKeepsNoopWhenDirectCallAndFinalTextEmpty(t *testing.T) {
-	t.Setenv("YURURI_MOCK_CODEX_HELPER", "1")
-
-	client := &Client{
-		command: os.Args[0],
-		args:    []string{"-test.run=^TestMockCodexProcess$", "--", "turn-completed-empty"},
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	got, err := client.RunTurn(ctx, TurnInput{
-		AuthorID: "user-1",
-		Content:  "ゆるり",
-		IsOwner:  false,
-	})
-	if err != nil {
-		t.Fatalf("RunTurn() error = %v", err)
-	}
-	if got != (Decision{Action: "noop"}) {
-		t.Fatalf("RunTurn() = %+v, want %+v", got, Decision{Action: "noop"})
-	}
-}
-
-func TestRunTurnSendsModelAndEffortParams(t *testing.T) {
-	t.Setenv("YURURI_MOCK_CODEX_HELPER", "1")
-
-	client := &Client{
-		command:         os.Args[0],
-		args:            []string{"-test.run=^TestMockCodexProcess$", "--", "turn-completed-empty-with-model-effort"},
-		model:           "gpt-5.3-codex",
-		reasoningEffort: "medium",
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	got, err := client.RunTurn(ctx, TurnInput{
-		AuthorID: "user-1",
-		Content:  "ping",
-		IsOwner:  false,
-	})
-	if err != nil {
-		t.Fatalf("RunTurn() error = %v", err)
-	}
-	if got != (Decision{Action: "noop"}) {
-		t.Fatalf("RunTurn() = %+v, want %+v", got, Decision{Action: "noop"})
-	}
-}
-
-func assertThreadStartModelParam(t *testing.T, params map[string]any, expectedModel string) {
-	t.Helper()
-
-	model, ok := params["model"]
-	if strings.TrimSpace(expectedModel) == "" {
-		if ok {
-			t.Fatalf("thread/start params unexpectedly contains model: %#v", params)
-		}
-		return
-	}
+	configValue, ok := params["config"].(map[string]any)
 	if !ok {
-		t.Fatalf("thread/start params missing model: %#v", params)
+		t.Fatalf("threadStartParams config missing or invalid: %#v", params)
 	}
-	if model != expectedModel {
-		t.Fatalf("thread/start params model = %#v, want %#v", model, expectedModel)
+	mcpServers, ok := configValue["mcp_servers"].(map[string]any)
+	if !ok {
+		t.Fatalf("threadStartParams config.mcp_servers missing: %#v", configValue)
+	}
+	discord, ok := mcpServers["discord"].(map[string]any)
+	if !ok {
+		t.Fatalf("threadStartParams config.mcp_servers.discord missing: %#v", mcpServers)
+	}
+	if url, _ := discord["url"].(string); url != "http://127.0.0.1:39393/mcp" {
+		t.Fatalf("mcp url = %q, want %q", url, "http://127.0.0.1:39393/mcp")
+	}
+
+	if got, _ := configValue["model_reasoning_effort"].(string); got != "medium" {
+		t.Fatalf("model_reasoning_effort = %q, want %q", got, "medium")
 	}
 }
 
-func assertTurnStartEffortParam(t *testing.T, params map[string]any, expectedEffort string) {
-	t.Helper()
+func TestRunTurnReturnsAssistantText(t *testing.T) {
+	t.Setenv("YURURI_MOCK_CODEX_HELPER", "1")
+	workspaceDir := t.TempDir()
+	homeDir := t.TempDir()
 
-	effort, ok := params["effort"]
-	if strings.TrimSpace(expectedEffort) == "" {
-		if ok {
-			t.Fatalf("turn/start params unexpectedly contains effort: %#v", params)
-		}
-		return
+	client := NewClient(config.CodexConfig{
+		Command:         os.Args[0],
+		Args:            []string{"-test.run=^TestMockCodexProcess$", "--", "assistant-text"},
+		Model:           "gpt-5.3-codex",
+		ReasoningEffort: "medium",
+		WorkspaceDir:    workspaceDir,
+		HomeDir:         homeDir,
+	}, "http://127.0.0.1:39393/mcp")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	got, err := client.RunTurn(ctx, TurnInput{
+		BaseInstructions:      "base",
+		DeveloperInstructions: "dev",
+		UserPrompt:            "ゆるり、見えてる？",
+	})
+	if err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
 	}
-	if !ok {
-		t.Fatalf("turn/start params missing effort: %#v", params)
+	if got.Status != "completed" {
+		t.Fatalf("RunTurn() status = %q, want completed", got.Status)
 	}
-	if effort != expectedEffort {
-		t.Fatalf("turn/start params effort = %#v, want %#v", effort, expectedEffort)
+	if got.AssistantText != "こんにちは、見えてるよ。" {
+		t.Fatalf("RunTurn() assistant text = %q, want %q", got.AssistantText, "こんにちは、見えてるよ。")
+	}
+	if got.ThreadID != "thread-1" {
+		t.Fatalf("RunTurn() thread id = %q, want thread-1", got.ThreadID)
+	}
+	if got.TurnID != "turn-1" {
+		t.Fatalf("RunTurn() turn id = %q, want turn-1", got.TurnID)
+	}
+}
+
+func TestRunTurnHandlesUserInputRequest(t *testing.T) {
+	t.Setenv("YURURI_MOCK_CODEX_HELPER", "1")
+	workspaceDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	client := NewClient(config.CodexConfig{
+		Command:         os.Args[0],
+		Args:            []string{"-test.run=^TestMockCodexProcess$", "--", "user-input-request"},
+		Model:           "gpt-5.3-codex",
+		ReasoningEffort: "medium",
+		WorkspaceDir:    workspaceDir,
+		HomeDir:         homeDir,
+	}, "http://127.0.0.1:39393/mcp")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	got, err := client.RunTurn(ctx, TurnInput{
+		BaseInstructions:      "base",
+		DeveloperInstructions: "dev",
+		UserPrompt:            "test",
+	})
+	if err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
+	}
+	if got.Status != "completed" {
+		t.Fatalf("RunTurn() status = %q, want completed", got.Status)
+	}
+}
+
+func TestExtractThreadIDSupportsString(t *testing.T) {
+	t.Parallel()
+
+	got, err := extractThreadID(json.RawMessage(`"019c9a9f-1f64-72f1-be59-4abdd8ff88ef"`))
+	if err != nil {
+		t.Fatalf("extractThreadID() error = %v", err)
+	}
+	if got != "019c9a9f-1f64-72f1-be59-4abdd8ff88ef" {
+		t.Fatalf("extractThreadID() = %q", got)
 	}
 }
 
@@ -375,18 +167,6 @@ func TestMockCodexProcess(t *testing.T) {
 	dec.UseNumber()
 	enc := json.NewEncoder(os.Stdout)
 
-	expectedModel := ""
-	expectedEffort := ""
-
-	switch scenario {
-	case "turn-completed-empty":
-	case "turn-completed-empty-with-model-effort":
-		expectedModel = "gpt-5.3-codex"
-		expectedEffort = "medium"
-	default:
-		t.Fatalf("unknown mock codex scenario: %s", scenario)
-	}
-
 	readMockRequest(t, dec, initRequestID, "initialize")
 	writeMockResponse(t, enc, initRequestID, map[string]any{"ok": true})
 
@@ -394,256 +174,98 @@ func TestMockCodexProcess(t *testing.T) {
 
 	threadReq := readMockRequest(t, dec, threadRequestID, "thread/start")
 	threadParams := decodeNotificationParams(threadReq.Params)
-	developerInstructions, ok := threadParams["developerInstructions"].(string)
-	if !ok || strings.TrimSpace(developerInstructions) == "" {
-		t.Fatalf("thread/start params missing developerInstructions: %#v", threadParams)
-	}
-	assertThreadStartModelParam(t, threadParams, expectedModel)
+	assertThreadConfig(t, threadParams)
+	writeMockResponse(t, enc, threadRequestID, map[string]any{"thread": map[string]any{"id": "thread-1"}})
 
-	writeMockResponse(t, enc, threadRequestID, map[string]any{
-		"thread": map[string]any{"id": "thread-1"},
-	})
+	readMockRequest(t, dec, turnRequestID, "turn/start")
+	writeMockResponse(t, enc, turnRequestID, map[string]any{"turn": map[string]any{"id": "turn-1"}})
 
-	turnReq := readMockRequest(t, dec, turnRequestID, "turn/start")
-	turnParams := decodeNotificationParams(turnReq.Params)
-	assertTurnStartEffortParam(t, turnParams, expectedEffort)
-	writeMockResponse(t, enc, turnRequestID, map[string]any{"ok": true})
-	writeMockNotification(t, enc, "turn/completed", map[string]any{
-		"output": map[string]any{"text": " \n\t "},
-	})
-}
-
-func TestTurnStartParams(t *testing.T) {
-	t.Parallel()
-
-	params := turnStartParams("thread-1", "prompt", "medium")
-	if got := params["threadId"]; got != "thread-1" {
-		t.Fatalf("turnStartParams().threadId = %v, want thread-1", got)
-	}
-	if got := params["effort"]; got != "medium" {
-		t.Fatalf("turnStartParams().effort = %v, want medium", got)
-	}
-
-	input, ok := params["input"].([]map[string]any)
-	if !ok {
-		t.Fatalf("turnStartParams().input type = %T, want []map[string]any", params["input"])
-	}
-	if len(input) != 1 {
-		t.Fatalf("turnStartParams().input len = %d, want 1", len(input))
-	}
-	if input[0]["type"] != "text" {
-		t.Fatalf("turnStartParams().input[0].type = %v, want text", input[0]["type"])
-	}
-	if input[0]["text"] != "prompt" {
-		t.Fatalf("turnStartParams().input[0].text = %v, want prompt", input[0]["text"])
-	}
-
-	schema, ok := params["outputSchema"].(map[string]any)
-	if !ok {
-		t.Fatalf("turnStartParams().outputSchema type = %T, want map[string]any", params["outputSchema"])
-	}
-	oneOf, ok := schema["oneOf"].([]map[string]any)
-	if !ok {
-		t.Fatalf("turnStartParams().outputSchema.oneOf type = %T, want []map[string]any", schema["oneOf"])
-	}
-	if len(oneOf) != 2 {
-		t.Fatalf("turnStartParams().outputSchema.oneOf len = %d, want 2", len(oneOf))
-	}
-	if !hasActionConst(oneOf, "noop") {
-		t.Fatalf("turnStartParams().outputSchema missing noop action in %#v", oneOf)
-	}
-	if !hasActionConst(oneOf, "reply") {
-		t.Fatalf("turnStartParams().outputSchema missing reply action in %#v", oneOf)
-	}
-	if !replyRequiresContent(oneOf) {
-		t.Fatalf("turnStartParams().outputSchema reply rule must require non-empty content: %#v", oneOf)
-	}
-}
-
-func TestTurnStartParamsOmitsEffortWhenEmpty(t *testing.T) {
-	t.Parallel()
-
-	params := turnStartParams("thread-1", "prompt", "")
-	if _, ok := params["effort"]; ok {
-		t.Fatalf("turnStartParams() unexpectedly contains effort: %#v", params)
-	}
-}
-
-func TestExtractThreadID(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		raw     json.RawMessage
-		want    string
-		wantErr bool
-	}{
-		{
-			name: "prefer thread.id",
-			raw:  json.RawMessage(`{"thread":{"id":"thread-primary"},"threadId":"thread-fallback","thread_id":"thread-fallback2"}`),
-			want: "thread-primary",
-		},
-		{
-			name: "fallback threadId",
-			raw:  json.RawMessage(`{"threadId":"thread-camel"}`),
-			want: "thread-camel",
-		},
-		{
-			name: "fallback thread_id",
-			raw:  json.RawMessage(`{"thread_id":"thread-snake"}`),
-			want: "thread-snake",
-		},
-		{
-			name: "blank thread.id uses fallback",
-			raw:  json.RawMessage(`{"thread":{"id":"  "},"threadId":"thread-camel"}`),
-			want: "thread-camel",
-		},
-		{
-			name:    "missing thread id",
-			raw:     json.RawMessage(`{"thread":{"name":"x"}}`),
-			wantErr: true,
-		},
-		{
-			name:    "wrong thread.id type",
-			raw:     json.RawMessage(`{"thread":{"id":123}}`),
-			wantErr: true,
-		},
-		{
-			name:    "result is not object",
-			raw:     json.RawMessage(`["thread-1"]`),
-			wantErr: true,
-		},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := extractThreadID(tc.raw)
-			if tc.wantErr {
-				if err == nil {
-					t.Fatalf("extractThreadID() error = nil, want error")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("extractThreadID() error = %v", err)
-			}
-			if got != tc.want {
-				t.Fatalf("extractThreadID() = %q, want %q", got, tc.want)
-			}
+	switch scenario {
+	case "assistant-text":
+		writeMockNotification(t, enc, "item/completed", map[string]any{
+			"item": map[string]any{"type": "agentMessage", "text": "こんにちは、見えてるよ。"},
 		})
-	}
-}
+		writeMockNotification(t, enc, "turn/completed", map[string]any{
+			"turn": map[string]any{"id": "turn-1", "status": "completed"},
+		})
+	case "user-input-request":
+		writeMockRequestFromServer(t, enc, json.RawMessage(`60`), "item/tool/requestUserInput", map[string]any{
+			"questions": []map[string]any{{
+				"id":      "q1",
+				"options": []map[string]any{{"label": "Decline"}, {"label": "Accept"}},
+			}},
+		})
 
-func TestWithCodexHomeEnv(t *testing.T) {
-	t.Parallel()
-
-	base := []string{
-		"HOME=/tmp/original-home",
-		"CODEX_HOME=/tmp/old-codex-home",
-		"PATH=/usr/bin",
-	}
-	got := withCodexHomeEnv(base, "/tmp/new-codex-home")
-
-	if countEntries(got, "CODEX_HOME=") != 1 {
-		t.Fatalf("withCodexHomeEnv() CODEX_HOME entries = %d, want 1", countEntries(got, "CODEX_HOME="))
-	}
-	if !containsEnv(got, "CODEX_HOME=/tmp/new-codex-home") {
-		t.Fatalf("withCodexHomeEnv() missing CODEX_HOME=/tmp/new-codex-home in %v", got)
-	}
-	if !containsEnv(got, "HOME=/tmp/original-home") {
-		t.Fatalf("withCodexHomeEnv() changed HOME unexpectedly: %v", got)
-	}
-}
-
-func containsEnv(env []string, entry string) bool {
-	for _, v := range env {
-		if v == entry {
-			return true
+		resp := readRawMessage(t, dec)
+		if strings.TrimSpace(string(resp.ID)) != "60" {
+			t.Fatalf("request response id = %s, want 60", string(resp.ID))
 		}
-	}
-	return false
-}
-
-func countEntries(env []string, prefix string) int {
-	count := 0
-	for _, v := range env {
-		if strings.HasPrefix(v, prefix) {
-			count++
-		}
-	}
-	return count
-}
-
-func hasActionConst(oneOf []map[string]any, action string) bool {
-	for _, candidate := range oneOf {
-		properties, ok := candidate["properties"].(map[string]any)
+		result := decodeNotificationParams(resp.Result)
+		answersRaw, ok := result["answers"].(map[string]any)
 		if !ok {
-			continue
+			t.Fatalf("request response answers missing: %#v", result)
 		}
-		actionProp, ok := properties["action"].(map[string]any)
+		q1Raw, ok := answersRaw["q1"].(map[string]any)
 		if !ok {
-			continue
+			t.Fatalf("request response answers.q1 missing: %#v", answersRaw)
 		}
-		if actionProp["const"] == action {
-			return true
+		answerList, ok := q1Raw["answers"].([]any)
+		if !ok || len(answerList) == 0 {
+			t.Fatalf("request response answers list missing: %#v", q1Raw)
 		}
+		if answerList[0] != "Decline" {
+			t.Fatalf("request response answer = %#v, want Decline", answerList[0])
+		}
+
+		writeMockNotification(t, enc, "turn/completed", map[string]any{
+			"turn": map[string]any{"id": "turn-1", "status": "completed"},
+		})
+	default:
+		t.Fatalf("unknown mock codex scenario: %s", scenario)
 	}
-	return false
 }
 
-func replyRequiresContent(oneOf []map[string]any) bool {
-	for _, candidate := range oneOf {
-		properties, ok := candidate["properties"].(map[string]any)
-		if !ok {
-			continue
-		}
-		actionProp, ok := properties["action"].(map[string]any)
-		if !ok || actionProp["const"] != "reply" {
-			continue
-		}
-
-		required, ok := candidate["required"].([]string)
-		if !ok || !containsString(required, "content") {
-			return false
-		}
-		contentProp, ok := properties["content"].(map[string]any)
-		if !ok {
-			return false
-		}
-		if contentProp["type"] != "string" {
-			return false
-		}
-		if contentProp["minLength"] != 1 {
-			return false
-		}
-		return true
-	}
-	return false
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
-}
-
-func decodeTestNotificationParams(t *testing.T, raw string) map[string]any {
+func assertThreadConfig(t *testing.T, params map[string]any) {
 	t.Helper()
-	return decodeNotificationParams(json.RawMessage(raw))
+
+	if params["approvalPolicy"] != "never" {
+		t.Fatalf("thread/start approvalPolicy = %#v, want never", params["approvalPolicy"])
+	}
+	if params["sandbox"] != "workspace-write" {
+		t.Fatalf("thread/start sandbox = %#v, want workspace-write", params["sandbox"])
+	}
+	configRaw, ok := params["config"].(map[string]any)
+	if !ok {
+		t.Fatalf("thread/start config missing: %#v", params)
+	}
+	if configRaw["model_reasoning_effort"] != "medium" {
+		t.Fatalf("thread/start config.model_reasoning_effort = %#v, want medium", configRaw["model_reasoning_effort"])
+	}
+	mcpServers, ok := configRaw["mcp_servers"].(map[string]any)
+	if !ok {
+		t.Fatalf("thread/start config.mcp_servers missing: %#v", configRaw)
+	}
+	discord, ok := mcpServers["discord"].(map[string]any)
+	if !ok {
+		t.Fatalf("thread/start config.mcp_servers.discord missing: %#v", mcpServers)
+	}
+	if discord["url"] != "http://127.0.0.1:39393/mcp" {
+		t.Fatalf("thread/start config.mcp_servers.discord.url = %#v", discord["url"])
+	}
+}
+
+func readRawMessage(t *testing.T, dec *json.Decoder) rpcMessage {
+	t.Helper()
+	var msg rpcMessage
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode json-rpc message: %v", err)
+	}
+	return msg
 }
 
 func readMockRequest(t *testing.T, dec *json.Decoder, id int, method string) rpcMessage {
 	t.Helper()
-
-	var msg rpcMessage
-	if err := dec.Decode(&msg); err != nil {
-		t.Fatalf("decode request %s: %v", method, err)
-	}
+	msg := readRawMessage(t, dec)
 	if msg.Method != method {
 		t.Fatalf("request method = %q, want %q", msg.Method, method)
 	}
@@ -659,11 +281,7 @@ func readMockRequest(t *testing.T, dec *json.Decoder, id int, method string) rpc
 
 func readMockNotification(t *testing.T, dec *json.Decoder, method string) {
 	t.Helper()
-
-	var msg rpcMessage
-	if err := dec.Decode(&msg); err != nil {
-		t.Fatalf("decode notification %s: %v", method, err)
-	}
+	msg := readRawMessage(t, dec)
 	if msg.Method != method {
 		t.Fatalf("notification method = %q, want %q", msg.Method, method)
 	}
@@ -674,7 +292,6 @@ func readMockNotification(t *testing.T, dec *json.Decoder, method string) {
 
 func writeMockResponse(t *testing.T, enc *json.Encoder, id int, result any) {
 	t.Helper()
-
 	if err := enc.Encode(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
@@ -686,12 +303,29 @@ func writeMockResponse(t *testing.T, enc *json.Encoder, id int, result any) {
 
 func writeMockNotification(t *testing.T, enc *json.Encoder, method string, params any) {
 	t.Helper()
-
 	if err := enc.Encode(map[string]any{
 		"jsonrpc": "2.0",
 		"method":  method,
 		"params":  params,
 	}); err != nil {
 		t.Fatalf("encode notification %s: %v", method, err)
+	}
+}
+
+func writeMockRequestFromServer(t *testing.T, enc *json.Encoder, id json.RawMessage, method string, params any) {
+	t.Helper()
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  params,
+	}
+	var typedID any
+	if err := json.Unmarshal(id, &typedID); err != nil {
+		t.Fatalf("decode id: %v", err)
+	}
+	payload["id"] = typedID
+
+	if err := enc.Encode(payload); err != nil {
+		t.Fatalf("encode server request %s: %v", method, err)
 	}
 }

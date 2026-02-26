@@ -28,12 +28,30 @@ type Client struct {
 	reasoningEffort string
 	workspaceDir    string
 	homeDir         string
+	mcpURL          string
 }
 
 type TurnInput struct {
-	AuthorID string
-	Content  string
-	IsOwner  bool
+	BaseInstructions      string
+	DeveloperInstructions string
+	UserPrompt            string
+}
+
+type TurnResult struct {
+	ThreadID      string
+	TurnID        string
+	Status        string
+	AssistantText string
+	ErrorMessage  string
+	ToolCalls     []MCPToolCall
+}
+
+type MCPToolCall struct {
+	Server    string
+	Tool      string
+	Status    string
+	Arguments any
+	Result    any
 }
 
 type rpcMessage struct {
@@ -49,7 +67,7 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
-func NewClient(cfg config.CodexConfig) *Client {
+func NewClient(cfg config.CodexConfig, mcpURL string) *Client {
 	args := append([]string(nil), cfg.Args...)
 	return &Client{
 		command:         cfg.Command,
@@ -58,10 +76,11 @@ func NewClient(cfg config.CodexConfig) *Client {
 		reasoningEffort: cfg.ReasoningEffort,
 		workspaceDir:    cfg.WorkspaceDir,
 		homeDir:         cfg.HomeDir,
+		mcpURL:          strings.TrimSpace(mcpURL),
 	}
 }
 
-func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error) {
+func (c *Client) RunTurn(ctx context.Context, input TurnInput) (TurnResult, error) {
 	cmd := exec.CommandContext(ctx, c.command, c.args...)
 	if c.workspaceDir != "" {
 		cmd.Dir = c.workspaceDir
@@ -70,19 +89,19 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return Decision{}, fmt.Errorf("codex stdin pipe: %w", err)
+		return TurnResult{}, fmt.Errorf("codex stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return Decision{}, fmt.Errorf("codex stdout pipe: %w", err)
+		return TurnResult{}, fmt.Errorf("codex stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return Decision{}, fmt.Errorf("codex stderr pipe: %w", err)
+		return TurnResult{}, fmt.Errorf("codex stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return Decision{}, fmt.Errorf("start codex: %w", err)
+		return TurnResult{}, fmt.Errorf("start codex: %w", err)
 	}
 	defer func() {
 		_ = stdin.Close()
@@ -98,92 +117,86 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 	dec.UseNumber()
 
 	if err := sendRequest(enc, initRequestID, "initialize", map[string]any{
+		"capabilities": nil,
 		"clientInfo": map[string]any{
 			"name":    "yururi",
-			"version": "phase1",
+			"version": "phase-full",
 		},
 	}); err != nil {
-		return Decision{}, err
+		return TurnResult{}, err
 	}
-	initResp, err := readUntilResponse(dec, initRequestID, nil)
+	initResp, err := readUntilResponse(dec, enc, initRequestID, nil)
 	if err != nil {
-		return Decision{}, fmt.Errorf("read initialize response: %w", err)
+		return TurnResult{}, fmt.Errorf("read initialize response: %w", err)
 	}
 	if initResp.Error != nil {
-		return Decision{}, rpcCallError("initialize", initResp.Error)
+		return TurnResult{}, rpcCallError("initialize", initResp.Error)
 	}
 
 	if err := sendNotification(enc, "initialized", map[string]any{}); err != nil {
-		return Decision{}, err
+		return TurnResult{}, err
 	}
 
-	developerInstructions := buildDeveloperInstructions(input.IsOwner)
-	if err := sendRequest(enc, threadRequestID, "thread/start", threadStartParams(developerInstructions, c.model)); err != nil {
-		return Decision{}, err
+	if err := sendRequest(enc, threadRequestID, "thread/start", threadStartParams(input, c.model, c.workspaceDir, c.reasoningEffort, c.mcpURL)); err != nil {
+		return TurnResult{}, err
 	}
-	threadResp, err := readUntilResponse(dec, threadRequestID, nil)
+	threadResp, err := readUntilResponse(dec, enc, threadRequestID, nil)
 	if err != nil {
-		return Decision{}, fmt.Errorf("read thread/start response: %w", err)
+		return TurnResult{}, fmt.Errorf("read thread/start response: %w", err)
 	}
 	if threadResp.Error != nil {
-		return Decision{}, rpcCallError("thread/start", threadResp.Error)
+		return TurnResult{}, rpcCallError("thread/start", threadResp.Error)
 	}
 	threadID, err := extractThreadID(threadResp.Result)
 	if err != nil {
-		return Decision{}, fmt.Errorf("extract thread id: %w", err)
+		return TurnResult{}, fmt.Errorf("extract thread id: %w", err)
 	}
 
-	prompt := buildPrompt(input)
-	turnParams := turnStartParams(threadID, prompt, c.reasoningEffort)
-	if err := sendRequest(enc, turnRequestID, "turn/start", turnParams); err != nil {
-		return Decision{}, err
+	if err := sendRequest(enc, turnRequestID, "turn/start", turnStartParams(threadID, input.UserPrompt)); err != nil {
+		return TurnResult{}, err
 	}
 
-	aggregator := newTurnTextAggregator()
+	aggregator := newTurnAggregator()
 	onNotification := func(msg rpcMessage) {
 		method := normalizeMethod(msg.Method)
 		params := decodeNotificationParams(msg.Params)
 		aggregator.consume(method, params)
 	}
 
-	turnResp, err := readUntilResponse(dec, turnRequestID, onNotification)
+	turnResp, err := readUntilResponse(dec, enc, turnRequestID, onNotification)
 	if err != nil {
-		return Decision{}, fmt.Errorf("read turn/start response: %w", err)
+		return TurnResult{}, fmt.Errorf("read turn/start response: %w", err)
 	}
 	if turnResp.Error != nil {
-		return Decision{}, rpcCallError("turn/start", turnResp.Error)
+		return TurnResult{}, rpcCallError("turn/start", turnResp.Error)
 	}
+	turnID, _ := extractTurnID(turnResp.Result)
+	aggregator.turnID = turnID
 
 	for !aggregator.Completed() {
 		msg, err := readOneMessage(dec)
 		if err != nil {
-			return Decision{}, fmt.Errorf("wait turn/completed: %w", err)
+			return TurnResult{}, fmt.Errorf("wait turn/completed: %w", err)
 		}
-		if msg.Method == "" {
+		if msg.Method != "" && len(msg.ID) > 0 {
+			if err := handleServerRequest(enc, msg); err != nil {
+				return TurnResult{}, fmt.Errorf("handle server request: %w", err)
+			}
 			continue
 		}
-		onNotification(msg)
+		if msg.Method != "" {
+			onNotification(msg)
+		}
 	}
 
-	decision, err := parseDecisionOrNoop(aggregator.FinalText())
-	if err != nil {
-		return Decision{}, fmt.Errorf("parse model output: %w", err)
-	}
-	return decision, nil
-}
-
-func parseDecisionOrNoop(raw string) (Decision, error) {
-	if strings.TrimSpace(raw) == "" {
-		return Decision{Action: "noop"}, nil
-	}
-	return ParseDecisionOutput(raw)
-}
-
-func isDirectCall(content string) bool {
-	if strings.Contains(content, "ゆるり") {
-		return true
-	}
-	return strings.Contains(strings.ToLower(content), "yururi")
+	return TurnResult{
+		ThreadID:      threadID,
+		TurnID:        aggregator.turnID,
+		Status:        aggregator.status,
+		AssistantText: aggregator.FinalText(),
+		ErrorMessage:  aggregator.errorMessage,
+		ToolCalls:     aggregator.toolCalls,
+	}, nil
 }
 
 func sendRequest(enc *json.Encoder, id int, method string, params any) error {
@@ -197,6 +210,29 @@ func sendRequest(enc *json.Encoder, id int, method string, params any) error {
 	}
 	if err := enc.Encode(payload); err != nil {
 		return fmt.Errorf("send request %s: %w", method, err)
+	}
+	return nil
+}
+
+func sendResponse(enc *json.Encoder, id json.RawMessage, result any, rpcErr *rpcError) error {
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+	}
+	if len(id) > 0 {
+		var typed any
+		if err := json.Unmarshal(id, &typed); err == nil {
+			payload["id"] = typed
+		} else {
+			payload["id"] = string(id)
+		}
+	}
+	if rpcErr != nil {
+		payload["error"] = rpcErr
+	} else {
+		payload["result"] = result
+	}
+	if err := enc.Encode(payload); err != nil {
+		return fmt.Errorf("send response: %w", err)
 	}
 	return nil
 }
@@ -215,18 +251,27 @@ func sendNotification(enc *json.Encoder, method string, params any) error {
 	return nil
 }
 
-func readUntilResponse(dec *json.Decoder, id int, onNotification func(rpcMessage)) (rpcMessage, error) {
+func readUntilResponse(dec *json.Decoder, enc *json.Encoder, id int, onNotification func(rpcMessage)) (rpcMessage, error) {
 	for {
 		msg, err := readOneMessage(dec)
 		if err != nil {
 			return rpcMessage{}, err
 		}
+
+		if msg.Method != "" && len(msg.ID) > 0 {
+			if err := handleServerRequest(enc, msg); err != nil {
+				return rpcMessage{}, err
+			}
+			continue
+		}
+
 		if msg.Method != "" && len(msg.ID) == 0 {
 			if onNotification != nil {
 				onNotification(msg)
 			}
 			continue
 		}
+
 		if len(msg.ID) == 0 {
 			continue
 		}
@@ -238,6 +283,67 @@ func readUntilResponse(dec *json.Decoder, id int, onNotification func(rpcMessage
 			return msg, nil
 		}
 	}
+}
+
+func handleServerRequest(enc *json.Encoder, msg rpcMessage) error {
+	method := normalizeMethod(msg.Method)
+	switch method {
+	case "item_command_execution_request_approval", "item_file_change_request_approval", "exec_command_approval", "apply_patch_approval":
+		return sendResponse(enc, msg.ID, map[string]any{"decision": "decline"}, nil)
+	case "item_tool_request_user_input":
+		answers := map[string]any{}
+		params := decodeNotificationParams(msg.Params)
+		questionsRaw, ok := getValueAtPath(params, "questions")
+		if ok {
+			if questions, castOK := questionsRaw.([]any); castOK {
+				for _, q := range questions {
+					obj, ok := q.(map[string]any)
+					if !ok {
+						continue
+					}
+					qid, _ := obj["id"].(string)
+					if strings.TrimSpace(qid) == "" {
+						continue
+					}
+					label := pickOptionLabel(obj)
+					answers[qid] = map[string]any{"answers": []string{label}}
+				}
+			}
+		}
+		return sendResponse(enc, msg.ID, map[string]any{"answers": answers}, nil)
+	default:
+		return sendResponse(enc, msg.ID, nil, &rpcError{Code: -32601, Message: "unsupported server request: " + msg.Method})
+	}
+}
+
+func pickOptionLabel(question map[string]any) string {
+	optionsRaw, ok := question["options"]
+	if !ok {
+		return ""
+	}
+	options, ok := optionsRaw.([]any)
+	if !ok || len(options) == 0 {
+		return ""
+	}
+	best := ""
+	for _, raw := range options {
+		option, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		label, _ := option["label"].(string)
+		lowered := strings.ToLower(strings.TrimSpace(label))
+		if lowered == "" {
+			continue
+		}
+		if best == "" {
+			best = label
+		}
+		if strings.Contains(lowered, "decline") || strings.Contains(lowered, "cancel") {
+			return label
+		}
+	}
+	return best
 }
 
 func readOneMessage(dec *json.Decoder) (rpcMessage, error) {
@@ -320,18 +426,22 @@ func getFirstNonEmptyStringAtPaths(params map[string]any, paths ...[]string) str
 	return ""
 }
 
-type turnTextAggregator struct {
+type turnAggregator struct {
 	deltaBuilder      strings.Builder
 	agentMessageText  string
-	turnCompletedText string
 	completed         bool
+	status            string
+	errorMessage      string
+	turnID            string
+	toolCalls         []MCPToolCall
+	turnCompletedText string
 }
 
-func newTurnTextAggregator() *turnTextAggregator {
-	return &turnTextAggregator{}
+func newTurnAggregator() *turnAggregator {
+	return &turnAggregator{}
 }
 
-func (a *turnTextAggregator) consume(method string, params map[string]any) {
+func (a *turnAggregator) consume(method string, params map[string]any) {
 	switch {
 	case isAgentMessageDeltaMethod(method):
 		a.consumeAgentMessageDelta(params)
@@ -339,10 +449,12 @@ func (a *turnTextAggregator) consume(method string, params map[string]any) {
 		a.consumeItemCompleted(params)
 	case isTurnCompletedMethod(method):
 		a.consumeTurnCompleted(params)
+	case method == "error":
+		a.consumeError(params)
 	}
 }
 
-func (a *turnTextAggregator) consumeAgentMessageDelta(params map[string]any) {
+func (a *turnAggregator) consumeAgentMessageDelta(params map[string]any) {
 	delta, ok := getStringAtPath(params, "delta")
 	if !ok {
 		return
@@ -350,46 +462,77 @@ func (a *turnTextAggregator) consumeAgentMessageDelta(params map[string]any) {
 	a.deltaBuilder.WriteString(delta)
 }
 
-func (a *turnTextAggregator) consumeItemCompleted(params map[string]any) {
-	itemType, ok := getStringAtPath(params, "item", "type")
-	if !ok || strings.TrimSpace(itemType) != "agentMessage" {
-		return
-	}
-
-	text, ok := getStringAtPath(params, "item", "text")
+func (a *turnAggregator) consumeItemCompleted(params map[string]any) {
+	itemRaw, ok := getValueAtPath(params, "item")
 	if !ok {
 		return
 	}
-	if strings.TrimSpace(text) == "" {
+	item, ok := itemRaw.(map[string]any)
+	if !ok {
 		return
 	}
-	a.agentMessageText = text
+	itemTypeRaw, _ := item["type"].(string)
+	itemType := normalizeItemType(itemTypeRaw)
+
+	switch itemType {
+	case "agentmessage":
+		if text := extractAgentMessageText(item); strings.TrimSpace(text) != "" {
+			a.agentMessageText = strings.TrimSpace(text)
+		}
+	case "mcptoolcall":
+		call := MCPToolCall{}
+		call.Server, _ = item["server"].(string)
+		call.Tool, _ = item["tool"].(string)
+		call.Arguments = item["arguments"]
+		call.Result = item["result"]
+		call.Status = normalizeToolStatus(item["status"])
+		a.toolCalls = append(a.toolCalls, call)
+	}
 }
 
-func (a *turnTextAggregator) consumeTurnCompleted(params map[string]any) {
+func (a *turnAggregator) consumeTurnCompleted(params map[string]any) {
 	a.completed = true
+	if id, ok := getStringAtPath(params, "turn", "id"); ok && strings.TrimSpace(id) != "" {
+		a.turnID = id
+	}
+	if status := getFirstNonEmptyStringAtPaths(params, []string{"turn", "status"}, []string{"status"}); status != "" {
+		a.status = status
+	}
+	if errMsg := getFirstNonEmptyStringAtPaths(params,
+		[]string{"turn", "error_message"},
+		[]string{"turn", "error", "message"},
+		[]string{"error", "message"},
+	); errMsg != "" {
+		a.errorMessage = errMsg
+	}
 	if text := getFirstNonEmptyStringAtPaths(params,
 		[]string{"output", "text"},
 		[]string{"output", "content"},
-		[]string{"output", "final"},
 		[]string{"result", "text"},
 		[]string{"result", "content"},
-		[]string{"result", "final"},
 		[]string{"output"},
 		[]string{"result"},
 		[]string{"text"},
 		[]string{"content"},
-		[]string{"final"},
 	); text != "" {
 		a.turnCompletedText = text
 	}
 }
 
-func (a *turnTextAggregator) Completed() bool {
+func (a *turnAggregator) consumeError(params map[string]any) {
+	if errMsg := getFirstNonEmptyStringAtPaths(params,
+		[]string{"error", "message"},
+		[]string{"message"},
+	); errMsg != "" {
+		a.errorMessage = errMsg
+	}
+}
+
+func (a *turnAggregator) Completed() bool {
 	return a.completed
 }
 
-func (a *turnTextAggregator) FinalText() string {
+func (a *turnAggregator) FinalText() string {
 	if text := strings.TrimSpace(a.agentMessageText); text != "" {
 		return text
 	}
@@ -425,6 +568,69 @@ func normalizeMethod(method string) string {
 	return strings.Trim(string(out), "_")
 }
 
+func normalizeItemType(raw string) string {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	raw = strings.ReplaceAll(raw, "_", "")
+	return raw
+}
+
+func normalizeToolStatus(raw any) string {
+	status, _ := raw.(string)
+	status = strings.TrimSpace(strings.ToLower(status))
+	switch status {
+	case "in_progress", "inprogress":
+		return "inProgress"
+	case "failed":
+		return "failed"
+	case "completed":
+		return "completed"
+	default:
+		if status == "" {
+			return "unknown"
+		}
+		return status
+	}
+}
+
+func extractAgentMessageText(item map[string]any) string {
+	if text, ok := item["text"].(string); ok {
+		return text
+	}
+	messageRaw, ok := item["message"]
+	if !ok {
+		return ""
+	}
+	message, ok := messageRaw.(map[string]any)
+	if !ok {
+		return ""
+	}
+	contentRaw, ok := message["content"]
+	if !ok {
+		return ""
+	}
+	entries, ok := contentRaw.([]any)
+	if !ok {
+		return ""
+	}
+	parts := make([]string, 0, len(entries))
+	for _, entryRaw := range entries {
+		entry, ok := entryRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		typeName, _ := entry["type"].(string)
+		if strings.TrimSpace(strings.ToLower(typeName)) != "text" {
+			continue
+		}
+		text, _ := entry["text"].(string)
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		parts = append(parts, text)
+	}
+	return strings.Join(parts, "")
+}
+
 func isAgentMessageDeltaMethod(method string) bool {
 	return strings.Contains(method, "agent_message_delta")
 }
@@ -437,67 +643,63 @@ func isTurnCompletedMethod(method string) bool {
 	return method == "turn_completed"
 }
 
-func threadStartParams(developerInstructions string, model string) map[string]any {
+func threadStartParams(input TurnInput, model string, cwd string, reasoningEffort string, mcpURL string) map[string]any {
 	params := map[string]any{
-		"approvalPolicy":        "never",
-		"sandbox":               "workspace-write",
-		"developerInstructions": developerInstructions,
+		"approvalPolicy":         "never",
+		"sandbox":                "workspace-write",
+		"baseInstructions":       input.BaseInstructions,
+		"developerInstructions":  input.DeveloperInstructions,
+		"ephemeral":              true,
+		"personality":            "friendly",
+		"experimentalRawEvents":  false,
+		"persistExtendedHistory": false,
 	}
 	if strings.TrimSpace(model) != "" {
-		params["model"] = model
+		params["model"] = strings.TrimSpace(model)
 	}
+	if strings.TrimSpace(cwd) != "" {
+		params["cwd"] = strings.TrimSpace(cwd)
+	}
+
+	cfg := map[string]any{}
+	if strings.TrimSpace(reasoningEffort) != "" {
+		cfg["model_reasoning_effort"] = strings.TrimSpace(reasoningEffort)
+	}
+	if strings.TrimSpace(mcpURL) != "" {
+		cfg["mcp_servers"] = map[string]any{
+			"discord": map[string]any{
+				"url": strings.TrimSpace(mcpURL),
+			},
+		}
+	}
+	if len(cfg) > 0 {
+		params["config"] = cfg
+	}
+
 	return params
 }
 
-func turnStartParams(threadID string, prompt string, effort string) map[string]any {
-	params := map[string]any{
+func turnStartParams(threadID string, prompt string) map[string]any {
+	return map[string]any{
 		"threadId": threadID,
 		"input": []map[string]any{{
-			"type": "text",
-			"text": prompt,
+			"type":          "text",
+			"text":          prompt,
+			"text_elements": []any{},
 		}},
-		"outputSchema": decisionOutputSchema(),
-	}
-	if strings.TrimSpace(effort) != "" {
-		params["effort"] = effort
-	}
-	return params
-}
-
-func decisionOutputSchema() map[string]any {
-	return map[string]any{
-		"oneOf": []map[string]any{
-			{
-				"type": "object",
-				"properties": map[string]any{
-					"action": map[string]any{
-						"const": "noop",
-					},
-				},
-				"required":             []string{"action"},
-				"additionalProperties": false,
-			},
-			{
-				"type": "object",
-				"properties": map[string]any{
-					"action": map[string]any{
-						"const": "reply",
-					},
-					"content": map[string]any{
-						"type":      "string",
-						"minLength": 1,
-					},
-				},
-				"required":             []string{"action", "content"},
-				"additionalProperties": false,
-			},
-		},
 	}
 }
 
 func extractThreadID(raw json.RawMessage) (string, error) {
 	if len(raw) == 0 {
 		return "", errors.New("thread/start result is empty")
+	}
+	var direct string
+	if err := json.Unmarshal(raw, &direct); err == nil {
+		direct = strings.TrimSpace(direct)
+		if direct != "" {
+			return direct, nil
+		}
 	}
 
 	var result map[string]any
@@ -508,7 +710,7 @@ func extractThreadID(raw json.RawMessage) (string, error) {
 	if id := extractThreadIDFromThread(result); id != "" {
 		return id, nil
 	}
-	if id := extractTopLevelString(result, "threadId", "thread_id"); id != "" {
+	if id := extractTopLevelString(result, "threadId", "thread_id", "id"); id != "" {
 		return id, nil
 	}
 	return "", errors.New("thread id not found in thread/start result")
@@ -555,6 +757,34 @@ func extractTopLevelString(result map[string]any, keys ...string) string {
 	return ""
 }
 
+func extractTurnID(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var direct string
+	if err := json.Unmarshal(raw, &direct); err == nil {
+		direct = strings.TrimSpace(direct)
+		if direct != "" {
+			return direct, true
+		}
+	}
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", false
+	}
+	if turnRaw, ok := result["turn"]; ok {
+		if turn, ok := turnRaw.(map[string]any); ok {
+			if id, ok := turn["id"].(string); ok && strings.TrimSpace(id) != "" {
+				return id, true
+			}
+		}
+	}
+	if id := extractTopLevelString(result, "turnId", "turn_id", "id"); id != "" {
+		return id, true
+	}
+	return "", false
+}
+
 func withCodexHomeEnv(base []string, homeDir string) []string {
 	env := append([]string(nil), base...)
 	if homeDir == "" {
@@ -584,30 +814,4 @@ func rpcCallError(method string, err *rpcError) error {
 		return nil
 	}
 	return fmt.Errorf("%s failed: code=%d message=%s", method, err.Code, err.Message)
-}
-
-func buildPrompt(input TurnInput) string {
-	return fmt.Sprintf(`入力:
-- user_id: %s
-- is_owner: %t
-- message:
-%s`, input.AuthorID, input.IsOwner, input.Content)
-}
-
-func buildDeveloperInstructions(isOwner bool) string {
-	tone := "通常トーン"
-	if isOwner {
-		tone = "owner_user_idなので少し甘め"
-	}
-
-	return fmt.Sprintf(`あなたは「ゆるり」です。可愛い女子大生メイドとして自然に振る舞ってください。
-- 応答方針: 明確に呼びかけられた時のみ返信し、それ以外は不要な返信を避ける
-- 直接呼びかけ（「ゆるり」「yururi」など）には原則"reply"で応答し、"noop"にしない
-- 出力はJSON文字列のみ
-- actionは"noop"または"reply"のみ
-- 形式は厳密に次のどちらか:
-  {"action":"noop"}
-  {"action":"reply","content":"..."}
-- JSON以外の文字を絶対に出力しない
-- トーン: %s`, tone)
 }

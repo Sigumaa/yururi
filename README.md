@@ -1,54 +1,40 @@
 # yururi
 
-Discord向けエージェント「ゆるり」のPhase 1最小実装。
+Discord向け自律エージェント「ゆるり」。
+
+## 構成
+
+- Codex App Server (`codex --search app-server --listen stdio://`)
+- Discord inbound handler
+- MCP server (`/mcp`) with Discord tools + memory tools + utility tools
+- Markdown memory store (`memory/`)
+- Heartbeat cron runner
 
 ## 必要環境
 
-- Go 1.22+
-- `codex`コマンド（`--search app-server --listen stdio://`で起動可能）
+- Go 1.23+
+- `codex` コマンド
 - Discord Bot Token
 
 ## 設定
 
-`runtime/config.example.yaml` を `runtime/config.yaml` にコピーして作成する。
+`runtime/config.example.yaml` を `runtime/config.yaml` にコピーして設定する。
 
-```yaml
-discord:
-  token: "YOUR_DISCORD_BOT_TOKEN"
-  guild_id: "YOUR_GUILD_ID"
-  target_channel_ids:
-    - "TARGET_CHANNEL_ID"
-  excluded_channel_ids: []
-  allowed_bot_user_ids: []
-persona:
-  owner_user_id: "OWNER_USER_ID"
-codex:
-  command: "codex"
-  args: ["--search", "app-server", "--listen", "stdio://"]
-  model: "gpt-5.3-codex"
-  reasoning_effort: "medium"
-  workspace_dir: "./runtime/workspace"
-  home_dir: "./runtime/.codex-home"
-```
+主な設定キー:
 
-`cwd/home` の代わりに `workspace_dir/home_dir` も利用可能。
-
-環境変数で上書き可能:
-
-- `DISCORD_TOKEN`
-- `DISCORD_GUILD_ID`
-- `DISCORD_TARGET_CHANNEL_IDS`（カンマ区切り）
-- `DISCORD_EXCLUDED_CHANNEL_IDS`（カンマ区切り）
-- `DISCORD_ALLOWED_BOT_USER_IDS`（カンマ区切り）
-- `PERSONA_OWNER_USER_ID`
-- `CODEX_COMMAND`
-- `CODEX_ARGS`（JSON配列またはカンマ区切り）
-- `CODEX_MODEL`
-- `CODEX_REASONING_EFFORT`
-- `CODEX_CWD`
-- `CODEX_WORKSPACE_DIR`
-- `CODEX_HOME`
-- `CODEX_HOME_DIR`
+- `discord.guild_id`
+- `discord.target_channel_ids[]`
+- `persona.owner_user_id`
+- `codex.command`
+- `codex.args`
+- `codex.workspace_dir`
+- `codex.home_dir`
+- `mcp.bind`
+- `mcp.url`
+- `heartbeat.enabled`
+- `heartbeat.cron`
+- `heartbeat.timezone`
+- `memory.root_dir`
 
 ## 起動
 
@@ -56,6 +42,28 @@ codex:
 export CODEX_HOME="$PWD/runtime/.codex-home"
 go run ./cmd/yururi -config runtime/config.yaml
 ```
+
+起動時に `workspace_dir` 配下へ次のファイルを自動生成する。
+
+- `YURURI.md`
+- `SOUL.md`
+- `MEMORY.md`
+- `HEARTBEAT.md`
+
+## 実装済みMCP tools
+
+- `read_message_history`
+- `send_message`
+- `reply_message`
+- `add_reaction`
+- `start_typing`
+- `list_channels`
+- `get_user_detail`
+- `get_current_time`
+- `memory_upsert_user_note`
+- `memory_upsert_channel_intent`
+- `memory_upsert_task`
+- `memory_query`
 
 ## 検証
 

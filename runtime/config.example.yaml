@@ -14,3 +14,12 @@ codex:
   reasoning_effort: "medium"
   workspace_dir: "./runtime/workspace"
   home_dir: "./runtime/.codex-home"
+mcp:
+  bind: "127.0.0.1:39393"
+  url: "http://127.0.0.1:39393/mcp"
+heartbeat:
+  enabled: true
+  cron: "0 */30 * * * *"
+  timezone: "Asia/Tokyo"
+memory:
+  root_dir: "./runtime/memory"

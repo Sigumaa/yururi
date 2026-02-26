@@ -4,3 +4,4 @@ config.yaml
 runtime/config.yaml
 runtime/.codex-home/
 runtime/workspace/
+runtime/memory/
