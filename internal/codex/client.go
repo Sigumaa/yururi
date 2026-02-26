@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/sigumaa/yururi/internal/config"
 )
@@ -61,10 +62,7 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 	if c.workspaceDir != "" {
 		cmd.Dir = c.workspaceDir
 	}
-	cmd.Env = os.Environ()
-	if c.homeDir != "" {
-		cmd.Env = append(cmd.Env, "HOME="+c.homeDir)
-	}
+	cmd.Env = withCodexHomeEnv(os.Environ(), c.homeDir)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -115,7 +113,7 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 		return Decision{}, err
 	}
 
-	if err := sendRequest(enc, threadRequestID, "thread/start", map[string]any{}); err != nil {
+	if err := sendRequest(enc, threadRequestID, "thread/start", threadStartParams()); err != nil {
 		return Decision{}, err
 	}
 	threadResp, err := readUntilResponse(dec, threadRequestID, nil)
@@ -147,12 +145,12 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 	onNotification := func(msg rpcMessage) {
 		method := normalizeMethod(msg.Method)
 		switch {
-		case strings.Contains(method, "agent_message_delta"):
+		case isAgentMessageDeltaMethod(method):
 			delta := strings.TrimSpace(extractString(msg.Params, "delta", "text", "content"))
 			if delta != "" {
 				builder.WriteString(delta)
 			}
-		case method == "turn/completed" || method == "turn_completed":
+		case isTurnCompletedMethod(method):
 			if builder.Len() == 0 {
 				finalText := strings.TrimSpace(extractString(msg.Params, "output", "result", "text", "content", "final"))
 				if finalText != "" {
@@ -308,7 +306,68 @@ func extractStringFromAny(v any, keys ...string) string {
 }
 
 func normalizeMethod(method string) string {
-	return strings.TrimSpace(strings.ToLower(method))
+	method = strings.TrimSpace(method)
+	if method == "" {
+		return ""
+	}
+
+	var out []rune
+	for _, r := range method {
+		switch {
+		case unicode.IsUpper(r):
+			if len(out) > 0 && out[len(out)-1] != '_' && (unicode.IsLower(out[len(out)-1]) || unicode.IsDigit(out[len(out)-1])) {
+				out = append(out, '_')
+			}
+			out = append(out, unicode.ToLower(r))
+		case unicode.IsLower(r) || unicode.IsDigit(r):
+			out = append(out, r)
+		default:
+			if len(out) == 0 || out[len(out)-1] == '_' {
+				continue
+			}
+			out = append(out, '_')
+		}
+	}
+	return strings.Trim(string(out), "_")
+}
+
+func isAgentMessageDeltaMethod(method string) bool {
+	return strings.Contains(method, "agent_message_delta")
+}
+
+func isTurnCompletedMethod(method string) bool {
+	return method == "turn_completed"
+}
+
+func threadStartParams() map[string]any {
+	return map[string]any{
+		"approvalPolicy": "never",
+		"sandbox":        "workspace-write",
+	}
+}
+
+func withCodexHomeEnv(base []string, homeDir string) []string {
+	env := append([]string(nil), base...)
+	if homeDir == "" {
+		return env
+	}
+	return upsertEnv(env, "CODEX_HOME", homeDir)
+}
+
+func upsertEnv(env []string, key string, value string) []string {
+	prefix := key + "="
+	entry := prefix + value
+	replaced := false
+	for i := range env {
+		if strings.HasPrefix(env[i], prefix) {
+			env[i] = entry
+			replaced = true
+		}
+	}
+	if !replaced {
+		env = append(env, entry)
+	}
+	return env
 }
 
 func rpcCallError(method string, err *rpcError) error {
