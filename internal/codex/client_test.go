@@ -167,6 +167,43 @@ func TestParseDecisionOrNoop(t *testing.T) {
 	}
 }
 
+func TestIsDirectCall(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{
+			name:    "hiragana",
+			content: "ゆるり、ちょっと来て",
+			want:    true,
+		},
+		{
+			name:    "ascii",
+			content: "hey yururi",
+			want:    true,
+		},
+		{
+			name:    "not direct call",
+			content: "こんにちは",
+			want:    false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := isDirectCall(tc.content)
+			if got != tc.want {
+				t.Fatalf("isDirectCall(%q) = %v, want %v", tc.content, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunTurnReturnsNoopWhenFinalTextIsEmpty(t *testing.T) {
 	t.Setenv("YURURI_MOCK_CODEX_HELPER", "1")
 
@@ -188,6 +225,57 @@ func TestRunTurnReturnsNoopWhenFinalTextIsEmpty(t *testing.T) {
 	}
 	if got != (Decision{Action: "noop"}) {
 		t.Fatalf("RunTurn() = %+v, want %+v", got, Decision{Action: "noop"})
+	}
+}
+
+func TestRunTurnFallbackReplyWhenNoopAndDirectCall(t *testing.T) {
+	t.Setenv("YURURI_MOCK_CODEX_HELPER", "1")
+
+	tests := []struct {
+		name    string
+		content string
+		isOwner bool
+	}{
+		{
+			name:    "non-owner",
+			content: "ゆるり",
+			isOwner: false,
+		},
+		{
+			name:    "owner",
+			content: "yururi",
+			isOwner: true,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			client := &Client{
+				command: os.Args[0],
+				args:    []string{"-test.run=^TestMockCodexProcess$", "--", "turn-completed-empty"},
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			got, err := client.RunTurn(ctx, TurnInput{
+				AuthorID: "user-1",
+				Content:  tc.content,
+				IsOwner:  tc.isOwner,
+			})
+			if err != nil {
+				t.Fatalf("RunTurn() error = %v", err)
+			}
+
+			want := Decision{
+				Action:  "reply",
+				Content: fallbackReply(tc.isOwner),
+			}
+			if got != want {
+				t.Fatalf("RunTurn() = %+v, want %+v", got, want)
+			}
+		})
 	}
 }
 

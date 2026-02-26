@@ -165,6 +165,12 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 	if err != nil {
 		return Decision{}, fmt.Errorf("parse model output: %w", err)
 	}
+	if decision.Action == "noop" && isDirectCall(input.Content) {
+		decision = Decision{
+			Action:  "reply",
+			Content: fallbackReply(input.IsOwner),
+		}
+	}
 	return decision, nil
 }
 
@@ -173,6 +179,20 @@ func parseDecisionOrNoop(raw string) (Decision, error) {
 		return Decision{Action: "noop"}, nil
 	}
 	return ParseDecisionOutput(raw)
+}
+
+func isDirectCall(content string) bool {
+	if strings.Contains(content, "ゆるり") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(content), "yururi")
+}
+
+func fallbackReply(isOwner bool) string {
+	if isOwner {
+		return "はい、ご主人さま。ゆるりです。"
+	}
+	return "はい、ゆるりです。"
 }
 
 func sendRequest(enc *json.Encoder, id int, method string, params any) error {
