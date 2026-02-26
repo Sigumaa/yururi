@@ -113,7 +113,8 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 		return Decision{}, err
 	}
 
-	if err := sendRequest(enc, threadRequestID, "thread/start", threadStartParams()); err != nil {
+	developerInstructions := buildDeveloperInstructions(input.IsOwner)
+	if err := sendRequest(enc, threadRequestID, "thread/start", threadStartParams(developerInstructions)); err != nil {
 		return Decision{}, err
 	}
 	threadResp, err := readUntilResponse(dec, threadRequestID, nil)
@@ -160,11 +161,18 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 		onNotification(msg)
 	}
 
-	decision, err := ParseDecisionOutput(aggregator.FinalText())
+	decision, err := parseDecisionOrNoop(aggregator.FinalText())
 	if err != nil {
 		return Decision{}, fmt.Errorf("parse model output: %w", err)
 	}
 	return decision, nil
+}
+
+func parseDecisionOrNoop(raw string) (Decision, error) {
+	if strings.TrimSpace(raw) == "" {
+		return Decision{Action: "noop"}, nil
+	}
+	return ParseDecisionOutput(raw)
 }
 
 func sendRequest(enc *json.Encoder, id int, method string, params any) error {
@@ -418,10 +426,11 @@ func isTurnCompletedMethod(method string) bool {
 	return method == "turn_completed"
 }
 
-func threadStartParams() map[string]any {
+func threadStartParams(developerInstructions string) map[string]any {
 	return map[string]any{
-		"approvalPolicy": "never",
-		"sandbox":        "workspace-write",
+		"approvalPolicy":        "never",
+		"sandbox":               "workspace-write",
+		"developerInstructions": developerInstructions,
 	}
 }
 
@@ -577,4 +586,20 @@ func buildPrompt(input TurnInput) string {
 - user_id: %s
 - message:
 %s`, tone, input.AuthorID, input.Content)
+}
+
+func buildDeveloperInstructions(isOwner bool) string {
+	tone := "通常トーン"
+	if isOwner {
+		tone = "owner_user_idなので少し甘め"
+	}
+
+	return fmt.Sprintf(`あなたは「ゆるり」です。可愛い女子大生メイドとして自然に振る舞ってください。
+- 出力はJSON文字列のみ
+- actionは"noop"または"reply"のみ
+- 形式は厳密に次のどちらか:
+  {"action":"noop"}
+  {"action":"reply","content":"..."}
+- JSON以外の文字を絶対に出力しない
+- トーン: %s`, tone)
 }

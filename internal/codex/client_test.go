@@ -1,9 +1,12 @@
 package codex
 
 import (
+	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeMethod(t *testing.T) {
@@ -114,12 +117,125 @@ func TestTurnTextAggregatorFinalTextPrefersAgentMessageAfterTurnCompleted(t *tes
 func TestThreadStartParams(t *testing.T) {
 	t.Parallel()
 
-	params := threadStartParams()
+	params := threadStartParams("dev-instructions")
 	if got := params["approvalPolicy"]; got != "never" {
 		t.Fatalf("threadStartParams().approvalPolicy = %v, want never", got)
 	}
 	if got := params["sandbox"]; got != "workspace-write" {
 		t.Fatalf("threadStartParams().sandbox = %v, want workspace-write", got)
+	}
+	if got := params["developerInstructions"]; got != "dev-instructions" {
+		t.Fatalf("threadStartParams().developerInstructions = %v, want dev-instructions", got)
+	}
+}
+
+func TestBuildDeveloperInstructions(t *testing.T) {
+	t.Parallel()
+
+	owner := buildDeveloperInstructions(true)
+	nonOwner := buildDeveloperInstructions(false)
+
+	if !strings.Contains(owner, "可愛い女子大生メイド") {
+		t.Fatalf("buildDeveloperInstructions(true) missing persona: %q", owner)
+	}
+	if !strings.Contains(owner, `actionは"noop"または"reply"のみ`) {
+		t.Fatalf("buildDeveloperInstructions(true) missing action rule: %q", owner)
+	}
+	if !strings.Contains(nonOwner, `actionは"noop"または"reply"のみ`) {
+		t.Fatalf("buildDeveloperInstructions(false) missing action rule: %q", nonOwner)
+	}
+	if !strings.Contains(owner, "owner_user_idなので少し甘め") {
+		t.Fatalf("buildDeveloperInstructions(true) missing owner tone: %q", owner)
+	}
+	if strings.Contains(nonOwner, "owner_user_idなので少し甘め") {
+		t.Fatalf("buildDeveloperInstructions(false) unexpectedly contains owner tone: %q", nonOwner)
+	}
+	if !strings.Contains(nonOwner, "通常トーン") {
+		t.Fatalf("buildDeveloperInstructions(false) missing non-owner tone: %q", nonOwner)
+	}
+}
+
+func TestParseDecisionOrNoop(t *testing.T) {
+	t.Parallel()
+
+	got, err := parseDecisionOrNoop(" \n\t ")
+	if err != nil {
+		t.Fatalf("parseDecisionOrNoop(empty) error = %v, want nil", err)
+	}
+	if got != (Decision{Action: "noop"}) {
+		t.Fatalf("parseDecisionOrNoop(empty) = %+v, want %+v", got, Decision{Action: "noop"})
+	}
+}
+
+func TestRunTurnReturnsNoopWhenFinalTextIsEmpty(t *testing.T) {
+	t.Setenv("YURURI_MOCK_CODEX_HELPER", "1")
+
+	client := &Client{
+		command: os.Args[0],
+		args:    []string{"-test.run=^TestMockCodexProcess$", "--", "turn-completed-empty"},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	got, err := client.RunTurn(ctx, TurnInput{
+		AuthorID: "user-1",
+		Content:  "ping",
+		IsOwner:  false,
+	})
+	if err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
+	}
+	if got != (Decision{Action: "noop"}) {
+		t.Fatalf("RunTurn() = %+v, want %+v", got, Decision{Action: "noop"})
+	}
+}
+
+func TestMockCodexProcess(t *testing.T) {
+	if os.Getenv("YURURI_MOCK_CODEX_HELPER") != "1" {
+		return
+	}
+
+	scenario := ""
+	for i, arg := range os.Args {
+		if arg == "--" && i+1 < len(os.Args) {
+			scenario = os.Args[i+1]
+			break
+		}
+	}
+	if scenario == "" {
+		t.Fatal("mock codex scenario is required")
+	}
+
+	dec := json.NewDecoder(os.Stdin)
+	dec.UseNumber()
+	enc := json.NewEncoder(os.Stdout)
+
+	switch scenario {
+	case "turn-completed-empty":
+		readMockRequest(t, dec, initRequestID, "initialize")
+		writeMockResponse(t, enc, initRequestID, map[string]any{"ok": true})
+
+		readMockNotification(t, dec, "initialized")
+
+		threadReq := readMockRequest(t, dec, threadRequestID, "thread/start")
+		threadParams := decodeNotificationParams(threadReq.Params)
+		developerInstructions, ok := threadParams["developerInstructions"].(string)
+		if !ok || strings.TrimSpace(developerInstructions) == "" {
+			t.Fatalf("thread/start params missing developerInstructions: %#v", threadParams)
+		}
+
+		writeMockResponse(t, enc, threadRequestID, map[string]any{
+			"thread": map[string]any{"id": "thread-1"},
+		})
+
+		readMockRequest(t, dec, turnRequestID, "turn/start")
+		writeMockResponse(t, enc, turnRequestID, map[string]any{"ok": true})
+		writeMockNotification(t, enc, "turn/completed", map[string]any{
+			"output": map[string]any{"text": " \n\t "},
+		})
+	default:
+		t.Fatalf("unknown mock codex scenario: %s", scenario)
 	}
 }
 
@@ -333,4 +449,63 @@ func containsString(values []string, target string) bool {
 func decodeTestNotificationParams(t *testing.T, raw string) map[string]any {
 	t.Helper()
 	return decodeNotificationParams(json.RawMessage(raw))
+}
+
+func readMockRequest(t *testing.T, dec *json.Decoder, id int, method string) rpcMessage {
+	t.Helper()
+
+	var msg rpcMessage
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode request %s: %v", method, err)
+	}
+	if msg.Method != method {
+		t.Fatalf("request method = %q, want %q", msg.Method, method)
+	}
+	gotID, err := parseID(msg.ID)
+	if err != nil {
+		t.Fatalf("request %s parse id: %v", method, err)
+	}
+	if gotID != id {
+		t.Fatalf("request %s id = %d, want %d", method, gotID, id)
+	}
+	return msg
+}
+
+func readMockNotification(t *testing.T, dec *json.Decoder, method string) {
+	t.Helper()
+
+	var msg rpcMessage
+	if err := dec.Decode(&msg); err != nil {
+		t.Fatalf("decode notification %s: %v", method, err)
+	}
+	if msg.Method != method {
+		t.Fatalf("notification method = %q, want %q", msg.Method, method)
+	}
+	if len(msg.ID) != 0 {
+		t.Fatalf("notification %s unexpectedly has id: %s", method, string(msg.ID))
+	}
+}
+
+func writeMockResponse(t *testing.T, enc *json.Encoder, id int, result any) {
+	t.Helper()
+
+	if err := enc.Encode(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result":  result,
+	}); err != nil {
+		t.Fatalf("encode response id=%d: %v", id, err)
+	}
+}
+
+func writeMockNotification(t *testing.T, enc *json.Encoder, method string, params any) {
+	t.Helper()
+
+	if err := enc.Encode(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  params,
+	}); err != nil {
+		t.Fatalf("encode notification %s: %v", method, err)
+	}
 }
