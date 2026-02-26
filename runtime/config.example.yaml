@@ -1,0 +1,14 @@
+discord:
+  token: "YOUR_DISCORD_BOT_TOKEN"
+  guild_id: "YOUR_GUILD_ID"
+  target_channel_ids:
+    - "TARGET_CHANNEL_ID"
+  excluded_channel_ids: []
+  allowed_bot_user_ids: []
+persona:
+  owner_user_id: "OWNER_USER_ID"
+codex:
+  command: "codex"
+  args: ["--search", "app-server", "--listen", "stdio://"]
+  workspace_dir: "./runtime/workspace"
+  home_dir: "./runtime/.codex-home"

@@ -10,7 +10,7 @@ Discord向けエージェント「ゆるり」のPhase 1最小実装。
 
 ## 設定
 
-`config.yaml`を作成する。
+`runtime/config.example.yaml` を `runtime/config.yaml` にコピーして作成する。
 
 ```yaml
 discord:
@@ -25,8 +25,8 @@ persona:
 codex:
   command: "codex"
   args: ["--search", "app-server", "--listen", "stdio://"]
-  workspace_dir: "."
-  home_dir: "./.codex-home"
+  workspace_dir: "./runtime/workspace"
+  home_dir: "./runtime/.codex-home"
 ```
 
 `cwd/home` の代わりに `workspace_dir/home_dir` も利用可能。
@@ -49,7 +49,8 @@ codex:
 ## 起動
 
 ```bash
-go run ./cmd/yururi -config config.yaml
+export CODEX_HOME="$PWD/runtime/.codex-home"
+go run ./cmd/yururi -config runtime/config.yaml
 ```
 
 ## 検証
