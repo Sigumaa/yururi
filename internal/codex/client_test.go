@@ -57,6 +57,60 @@ func TestIsAgentMessageDeltaMethod(t *testing.T) {
 	}
 }
 
+func TestTurnTextAggregatorItemCompletedExtractsAgentMessageText(t *testing.T) {
+	t.Parallel()
+
+	aggregator := newTurnTextAggregator()
+	aggregator.consume(normalizeMethod("item/completed"), decodeTestNotificationParams(t, `{"item":{"type":"agentMessage","text":"{\"action\":\"noop\"}"}}`))
+
+	if got := aggregator.FinalText(); got != `{"action":"noop"}` {
+		t.Fatalf("turnTextAggregator.FinalText() = %q, want %q", got, `{"action":"noop"}`)
+	}
+}
+
+func TestTurnTextAggregatorItemCompletedIgnoresUserMessage(t *testing.T) {
+	t.Parallel()
+
+	aggregator := newTurnTextAggregator()
+	aggregator.consume(normalizeMethod("item/completed"), decodeTestNotificationParams(t, `{"item":{"type":"userMessage","text":"{\"action\":\"reply\",\"content\":\"no\"}"}}`))
+
+	if got := aggregator.FinalText(); got != "" {
+		t.Fatalf("turnTextAggregator.FinalText() = %q, want empty", got)
+	}
+}
+
+func TestTurnTextAggregatorAgentMessageDeltaUsesStringOnly(t *testing.T) {
+	t.Parallel()
+
+	aggregator := newTurnTextAggregator()
+	method := normalizeMethod("item/agentMessage/delta")
+
+	aggregator.consume(method, decodeTestNotificationParams(t, `{"delta":"foo"}`))
+	aggregator.consume(method, decodeTestNotificationParams(t, `{"delta":123}`))
+	aggregator.consume(method, decodeTestNotificationParams(t, `{"delta":{"text":"ignored"}}`))
+	aggregator.consume(method, decodeTestNotificationParams(t, `{"delta":"bar"}`))
+
+	if got := aggregator.FinalText(); got != "foobar" {
+		t.Fatalf("turnTextAggregator.FinalText() = %q, want %q", got, "foobar")
+	}
+}
+
+func TestTurnTextAggregatorFinalTextPrefersAgentMessageAfterTurnCompleted(t *testing.T) {
+	t.Parallel()
+
+	aggregator := newTurnTextAggregator()
+	aggregator.consume(normalizeMethod("item/agentMessage/delta"), decodeTestNotificationParams(t, `{"delta":"from-delta"}`))
+	aggregator.consume(normalizeMethod("item/completed"), decodeTestNotificationParams(t, `{"item":{"type":"agentMessage","text":"from-item"}}`))
+	aggregator.consume(normalizeMethod("turn/completed"), decodeTestNotificationParams(t, `{"output":{"text":"from-turn"}}`))
+
+	if !aggregator.Completed() {
+		t.Fatal("turnTextAggregator.Completed() = false, want true")
+	}
+	if got := aggregator.FinalText(); got != "from-item" {
+		t.Fatalf("turnTextAggregator.FinalText() = %q, want %q", got, "from-item")
+	}
+}
+
 func TestThreadStartParams(t *testing.T) {
 	t.Parallel()
 
@@ -274,4 +328,9 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func decodeTestNotificationParams(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	return decodeNotificationParams(json.RawMessage(raw))
 }

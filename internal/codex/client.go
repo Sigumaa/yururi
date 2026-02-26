@@ -134,25 +134,11 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 		return Decision{}, err
 	}
 
-	var builder strings.Builder
-	completed := false
+	aggregator := newTurnTextAggregator()
 	onNotification := func(msg rpcMessage) {
 		method := normalizeMethod(msg.Method)
-		switch {
-		case isAgentMessageDeltaMethod(method):
-			delta := strings.TrimSpace(extractString(msg.Params, "delta", "text", "content"))
-			if delta != "" {
-				builder.WriteString(delta)
-			}
-		case isTurnCompletedMethod(method):
-			if builder.Len() == 0 {
-				finalText := strings.TrimSpace(extractString(msg.Params, "output", "result", "text", "content", "final"))
-				if finalText != "" {
-					builder.WriteString(finalText)
-				}
-			}
-			completed = true
-		}
+		params := decodeNotificationParams(msg.Params)
+		aggregator.consume(method, params)
 	}
 
 	turnResp, err := readUntilResponse(dec, turnRequestID, onNotification)
@@ -163,7 +149,7 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 		return Decision{}, rpcCallError("turn/start", turnResp.Error)
 	}
 
-	for !completed {
+	for !aggregator.Completed() {
 		msg, err := readOneMessage(dec)
 		if err != nil {
 			return Decision{}, fmt.Errorf("wait turn/completed: %w", err)
@@ -174,7 +160,7 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 		onNotification(msg)
 	}
 
-	decision, err := ParseDecisionOutput(builder.String())
+	decision, err := ParseDecisionOutput(aggregator.FinalText())
 	if err != nil {
 		return Decision{}, fmt.Errorf("parse model output: %w", err)
 	}
@@ -258,45 +244,140 @@ func parseID(raw json.RawMessage) (int, error) {
 	return 0, errors.New("unsupported id type")
 }
 
-func extractString(raw json.RawMessage, keys ...string) string {
+func decodeNotificationParams(raw json.RawMessage) map[string]any {
 	if len(raw) == 0 {
-		return ""
+		return nil
 	}
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return ""
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil
 	}
-	return extractStringFromAny(v, keys...)
+	return params
 }
 
-func extractStringFromAny(v any, keys ...string) string {
-	switch value := v.(type) {
-	case string:
-		trimmed := strings.TrimSpace(value)
-		if trimmed != "" {
-			return trimmed
+func getValueAtPath(params map[string]any, path ...string) (any, bool) {
+	if len(path) == 0 || params == nil {
+		return nil, false
+	}
+
+	var current any = params
+	for _, key := range path {
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
 		}
-	case map[string]any:
-		for _, key := range keys {
-			if raw, ok := value[key]; ok {
-				if s := extractStringFromAny(raw, keys...); s != "" {
-					return s
-				}
-			}
+		next, ok := object[key]
+		if !ok {
+			return nil, false
 		}
-		for _, raw := range value {
-			if s := extractStringFromAny(raw, keys...); s != "" {
-				return s
-			}
+		current = next
+	}
+	return current, true
+}
+
+func getStringAtPath(params map[string]any, path ...string) (string, bool) {
+	value, ok := getValueAtPath(params, path...)
+	if !ok {
+		return "", false
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	return text, true
+}
+
+func getFirstNonEmptyStringAtPaths(params map[string]any, paths ...[]string) string {
+	for _, path := range paths {
+		text, ok := getStringAtPath(params, path...)
+		if !ok {
+			continue
 		}
-	case []any:
-		for _, raw := range value {
-			if s := extractStringFromAny(raw, keys...); s != "" {
-				return s
-			}
+		text = strings.TrimSpace(text)
+		if text != "" {
+			return text
 		}
 	}
 	return ""
+}
+
+type turnTextAggregator struct {
+	deltaBuilder      strings.Builder
+	agentMessageText  string
+	turnCompletedText string
+	completed         bool
+}
+
+func newTurnTextAggregator() *turnTextAggregator {
+	return &turnTextAggregator{}
+}
+
+func (a *turnTextAggregator) consume(method string, params map[string]any) {
+	switch {
+	case isAgentMessageDeltaMethod(method):
+		a.consumeAgentMessageDelta(params)
+	case isItemCompletedMethod(method):
+		a.consumeItemCompleted(params)
+	case isTurnCompletedMethod(method):
+		a.consumeTurnCompleted(params)
+	}
+}
+
+func (a *turnTextAggregator) consumeAgentMessageDelta(params map[string]any) {
+	delta, ok := getStringAtPath(params, "delta")
+	if !ok {
+		return
+	}
+	a.deltaBuilder.WriteString(delta)
+}
+
+func (a *turnTextAggregator) consumeItemCompleted(params map[string]any) {
+	itemType, ok := getStringAtPath(params, "item", "type")
+	if !ok || strings.TrimSpace(itemType) != "agentMessage" {
+		return
+	}
+
+	text, ok := getStringAtPath(params, "item", "text")
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	a.agentMessageText = text
+}
+
+func (a *turnTextAggregator) consumeTurnCompleted(params map[string]any) {
+	a.completed = true
+	if text := getFirstNonEmptyStringAtPaths(params,
+		[]string{"output", "text"},
+		[]string{"output", "content"},
+		[]string{"output", "final"},
+		[]string{"result", "text"},
+		[]string{"result", "content"},
+		[]string{"result", "final"},
+		[]string{"output"},
+		[]string{"result"},
+		[]string{"text"},
+		[]string{"content"},
+		[]string{"final"},
+	); text != "" {
+		a.turnCompletedText = text
+	}
+}
+
+func (a *turnTextAggregator) Completed() bool {
+	return a.completed
+}
+
+func (a *turnTextAggregator) FinalText() string {
+	if text := strings.TrimSpace(a.agentMessageText); text != "" {
+		return text
+	}
+	if text := strings.TrimSpace(a.deltaBuilder.String()); text != "" {
+		return text
+	}
+	return strings.TrimSpace(a.turnCompletedText)
 }
 
 func normalizeMethod(method string) string {
@@ -327,6 +408,10 @@ func normalizeMethod(method string) string {
 
 func isAgentMessageDeltaMethod(method string) bool {
 	return strings.Contains(method, "agent_message_delta")
+}
+
+func isItemCompletedMethod(method string) bool {
+	return method == "item_completed"
 }
 
 func isTurnCompletedMethod(method string) bool {
