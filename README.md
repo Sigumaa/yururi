@@ -25,8 +25,8 @@ persona:
 codex:
   command: "codex"
   args: ["--search", "app-server", "--listen", "stdio://"]
-  cwd: "/path/to/workspace"
-  home: "/path/to/home"
+  workspace_dir: "."
+  home_dir: "./.codex-home"
 ```
 
 `cwd/home` の代わりに `workspace_dir/home_dir` も利用可能。
