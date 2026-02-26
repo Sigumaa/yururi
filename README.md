@@ -25,6 +25,8 @@ persona:
 codex:
   command: "codex"
   args: ["--search", "app-server", "--listen", "stdio://"]
+  model: "gpt-5.3-codex"
+  reasoning_effort: "medium"
   workspace_dir: "./runtime/workspace"
   home_dir: "./runtime/.codex-home"
 ```
@@ -41,6 +43,8 @@ codex:
 - `PERSONA_OWNER_USER_ID`
 - `CODEX_COMMAND`
 - `CODEX_ARGS`（JSON配列またはカンマ区切り）
+- `CODEX_MODEL`
+- `CODEX_REASONING_EFFORT`
 - `CODEX_CWD`
 - `CODEX_WORKSPACE_DIR`
 - `CODEX_HOME`

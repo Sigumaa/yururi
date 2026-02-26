@@ -22,10 +22,12 @@ const (
 )
 
 type Client struct {
-	command      string
-	args         []string
-	workspaceDir string
-	homeDir      string
+	command         string
+	args            []string
+	model           string
+	reasoningEffort string
+	workspaceDir    string
+	homeDir         string
 }
 
 type TurnInput struct {
@@ -50,10 +52,12 @@ type rpcError struct {
 func NewClient(cfg config.CodexConfig) *Client {
 	args := append([]string(nil), cfg.Args...)
 	return &Client{
-		command:      cfg.Command,
-		args:         args,
-		workspaceDir: cfg.WorkspaceDir,
-		homeDir:      cfg.HomeDir,
+		command:         cfg.Command,
+		args:            args,
+		model:           cfg.Model,
+		reasoningEffort: cfg.ReasoningEffort,
+		workspaceDir:    cfg.WorkspaceDir,
+		homeDir:         cfg.HomeDir,
 	}
 }
 
@@ -114,7 +118,7 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 	}
 
 	developerInstructions := buildDeveloperInstructions(input.IsOwner)
-	if err := sendRequest(enc, threadRequestID, "thread/start", threadStartParams(developerInstructions)); err != nil {
+	if err := sendRequest(enc, threadRequestID, "thread/start", threadStartParams(developerInstructions, c.model)); err != nil {
 		return Decision{}, err
 	}
 	threadResp, err := readUntilResponse(dec, threadRequestID, nil)
@@ -130,7 +134,7 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 	}
 
 	prompt := buildPrompt(input)
-	turnParams := turnStartParams(threadID, prompt)
+	turnParams := turnStartParams(threadID, prompt, c.reasoningEffort)
 	if err := sendRequest(enc, turnRequestID, "turn/start", turnParams); err != nil {
 		return Decision{}, err
 	}
@@ -165,12 +169,6 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 	if err != nil {
 		return Decision{}, fmt.Errorf("parse model output: %w", err)
 	}
-	if decision.Action == "noop" && isDirectCall(input.Content) {
-		decision = Decision{
-			Action:  "reply",
-			Content: fallbackReply(input.IsOwner),
-		}
-	}
 	return decision, nil
 }
 
@@ -186,13 +184,6 @@ func isDirectCall(content string) bool {
 		return true
 	}
 	return strings.Contains(strings.ToLower(content), "yururi")
-}
-
-func fallbackReply(isOwner bool) string {
-	if isOwner {
-		return "はい、ご主人さま。ゆるりです。"
-	}
-	return "はい、ゆるりです。"
 }
 
 func sendRequest(enc *json.Encoder, id int, method string, params any) error {
@@ -446,16 +437,20 @@ func isTurnCompletedMethod(method string) bool {
 	return method == "turn_completed"
 }
 
-func threadStartParams(developerInstructions string) map[string]any {
-	return map[string]any{
+func threadStartParams(developerInstructions string, model string) map[string]any {
+	params := map[string]any{
 		"approvalPolicy":        "never",
 		"sandbox":               "workspace-write",
 		"developerInstructions": developerInstructions,
 	}
+	if strings.TrimSpace(model) != "" {
+		params["model"] = model
+	}
+	return params
 }
 
-func turnStartParams(threadID string, prompt string) map[string]any {
-	return map[string]any{
+func turnStartParams(threadID string, prompt string, effort string) map[string]any {
+	params := map[string]any{
 		"threadId": threadID,
 		"input": []map[string]any{{
 			"type": "text",
@@ -463,6 +458,10 @@ func turnStartParams(threadID string, prompt string) map[string]any {
 		}},
 		"outputSchema": decisionOutputSchema(),
 	}
+	if strings.TrimSpace(effort) != "" {
+		params["effort"] = effort
+	}
+	return params
 }
 
 func decisionOutputSchema() map[string]any {
@@ -588,24 +587,11 @@ func rpcCallError(method string, err *rpcError) error {
 }
 
 func buildPrompt(input TurnInput) string {
-	tone := "通常トーン"
-	if input.IsOwner {
-		tone = "owner_user_idなので少し甘め"
-	}
-
-	return fmt.Sprintf(`あなたは「ゆるり」です。可愛い女子大生メイドとして自然に振る舞ってください。
-- 出力はJSON文字列のみ
-- 形式は厳密に次のどちらか:
-  {"action":"noop"}
-  {"action":"reply","content":"..."}
-- JSON以外の文字を絶対に出力しない
-- 不要な返信は避けてよい
-- トーン: %s
-
-入力:
+	return fmt.Sprintf(`入力:
 - user_id: %s
+- is_owner: %t
 - message:
-%s`, tone, input.AuthorID, input.Content)
+%s`, input.AuthorID, input.IsOwner, input.Content)
 }
 
 func buildDeveloperInstructions(isOwner bool) string {
@@ -615,6 +601,8 @@ func buildDeveloperInstructions(isOwner bool) string {
 	}
 
 	return fmt.Sprintf(`あなたは「ゆるり」です。可愛い女子大生メイドとして自然に振る舞ってください。
+- 応答方針: 明確に呼びかけられた時のみ返信し、それ以外は不要な返信を避ける
+- 直接呼びかけ（「ゆるり」「yururi」など）には原則"reply"で応答し、"noop"にしない
 - 出力はJSON文字列のみ
 - actionは"noop"または"reply"のみ
 - 形式は厳密に次のどちらか:

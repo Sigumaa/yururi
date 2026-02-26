@@ -11,7 +11,9 @@ import (
 )
 
 const (
-	defaultCodexCommand = "codex"
+	defaultCodexCommand         = "codex"
+	defaultCodexModel           = "gpt-5.3-codex"
+	defaultCodexReasoningEffort = "medium"
 )
 
 var defaultCodexArgs = []string{"--search", "app-server", "--listen", "stdio://"}
@@ -35,19 +37,23 @@ type PersonaConfig struct {
 }
 
 type CodexConfig struct {
-	Command      string   `yaml:"command"`
-	Args         []string `yaml:"args"`
-	WorkspaceDir string   `yaml:"workspace_dir"`
-	CWD          string   `yaml:"cwd"`
-	HomeDir      string   `yaml:"home_dir"`
-	Home         string   `yaml:"home"`
+	Command         string   `yaml:"command"`
+	Args            []string `yaml:"args"`
+	Model           string   `yaml:"model"`
+	ReasoningEffort string   `yaml:"reasoning_effort"`
+	WorkspaceDir    string   `yaml:"workspace_dir"`
+	CWD             string   `yaml:"cwd"`
+	HomeDir         string   `yaml:"home_dir"`
+	Home            string   `yaml:"home"`
 }
 
 func Load(path string) (Config, error) {
 	cfg := Config{
 		Codex: CodexConfig{
-			Command: defaultCodexCommand,
-			Args:    append([]string(nil), defaultCodexArgs...),
+			Command:         defaultCodexCommand,
+			Args:            append([]string(nil), defaultCodexArgs...),
+			Model:           defaultCodexModel,
+			ReasoningEffort: defaultCodexReasoningEffort,
 		},
 	}
 
@@ -117,6 +123,8 @@ func applyEnvOverrides(cfg *Config) {
 	if v, ok := os.LookupEnv("CODEX_ARGS"); ok {
 		cfg.Codex.Args = parseArgs(v)
 	}
+	applyString("CODEX_MODEL", &cfg.Codex.Model)
+	applyString("CODEX_REASONING_EFFORT", &cfg.Codex.ReasoningEffort)
 	applyString("CODEX_CWD", &cfg.Codex.WorkspaceDir)
 	applyString("CODEX_WORKSPACE_DIR", &cfg.Codex.WorkspaceDir)
 	applyString("CODEX_HOME", &cfg.Codex.HomeDir)

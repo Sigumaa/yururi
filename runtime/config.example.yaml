@@ -10,5 +10,7 @@ persona:
 codex:
   command: "codex"
   args: ["--search", "app-server", "--listen", "stdio://"]
+  model: "gpt-5.3-codex"
+  reasoning_effort: "medium"
   workspace_dir: "./runtime/workspace"
   home_dir: "./runtime/.codex-home"

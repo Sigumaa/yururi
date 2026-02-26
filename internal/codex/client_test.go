@@ -117,7 +117,7 @@ func TestTurnTextAggregatorFinalTextPrefersAgentMessageAfterTurnCompleted(t *tes
 func TestThreadStartParams(t *testing.T) {
 	t.Parallel()
 
-	params := threadStartParams("dev-instructions")
+	params := threadStartParams("dev-instructions", "gpt-5.3-codex")
 	if got := params["approvalPolicy"]; got != "never" {
 		t.Fatalf("threadStartParams().approvalPolicy = %v, want never", got)
 	}
@@ -126,6 +126,18 @@ func TestThreadStartParams(t *testing.T) {
 	}
 	if got := params["developerInstructions"]; got != "dev-instructions" {
 		t.Fatalf("threadStartParams().developerInstructions = %v, want dev-instructions", got)
+	}
+	if got := params["model"]; got != "gpt-5.3-codex" {
+		t.Fatalf("threadStartParams().model = %v, want gpt-5.3-codex", got)
+	}
+}
+
+func TestThreadStartParamsOmitsModelWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	params := threadStartParams("dev-instructions", "")
+	if _, ok := params["model"]; ok {
+		t.Fatalf("threadStartParams() unexpectedly contains model: %#v", params)
 	}
 }
 
@@ -144,6 +156,9 @@ func TestBuildDeveloperInstructions(t *testing.T) {
 	if !strings.Contains(nonOwner, `actionは"noop"または"reply"のみ`) {
 		t.Fatalf("buildDeveloperInstructions(false) missing action rule: %q", nonOwner)
 	}
+	if !strings.Contains(owner, "直接呼びかけ") {
+		t.Fatalf("buildDeveloperInstructions(true) missing direct call policy: %q", owner)
+	}
 	if !strings.Contains(owner, "owner_user_idなので少し甘め") {
 		t.Fatalf("buildDeveloperInstructions(true) missing owner tone: %q", owner)
 	}
@@ -152,6 +167,32 @@ func TestBuildDeveloperInstructions(t *testing.T) {
 	}
 	if !strings.Contains(nonOwner, "通常トーン") {
 		t.Fatalf("buildDeveloperInstructions(false) missing non-owner tone: %q", nonOwner)
+	}
+}
+
+func TestBuildPromptContainsFactsOnly(t *testing.T) {
+	t.Parallel()
+
+	prompt := buildPrompt(TurnInput{
+		AuthorID: "user-1",
+		Content:  "こんにちは",
+		IsOwner:  true,
+	})
+
+	if !strings.Contains(prompt, "user_id: user-1") {
+		t.Fatalf("buildPrompt() missing user_id: %q", prompt)
+	}
+	if !strings.Contains(prompt, "is_owner: true") {
+		t.Fatalf("buildPrompt() missing is_owner fact: %q", prompt)
+	}
+	if !strings.Contains(prompt, "こんにちは") {
+		t.Fatalf("buildPrompt() missing message content: %q", prompt)
+	}
+	if strings.Contains(prompt, `actionは"noop"または"reply"のみ`) {
+		t.Fatalf("buildPrompt() unexpectedly contains JSON action rule: %q", prompt)
+	}
+	if strings.Contains(prompt, "JSON文字列のみ") {
+		t.Fatalf("buildPrompt() unexpectedly contains JSON constraint: %q", prompt)
 	}
 }
 
@@ -228,54 +269,89 @@ func TestRunTurnReturnsNoopWhenFinalTextIsEmpty(t *testing.T) {
 	}
 }
 
-func TestRunTurnFallbackReplyWhenNoopAndDirectCall(t *testing.T) {
+func TestRunTurnKeepsNoopWhenDirectCallAndFinalTextEmpty(t *testing.T) {
 	t.Setenv("YURURI_MOCK_CODEX_HELPER", "1")
 
-	tests := []struct {
-		name    string
-		content string
-		isOwner bool
-	}{
-		{
-			name:    "non-owner",
-			content: "ゆるり",
-			isOwner: false,
-		},
-		{
-			name:    "owner",
-			content: "yururi",
-			isOwner: true,
-		},
+	client := &Client{
+		command: os.Args[0],
+		args:    []string{"-test.run=^TestMockCodexProcess$", "--", "turn-completed-empty"},
 	}
 
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			client := &Client{
-				command: os.Args[0],
-				args:    []string{"-test.run=^TestMockCodexProcess$", "--", "turn-completed-empty"},
-			}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
+	got, err := client.RunTurn(ctx, TurnInput{
+		AuthorID: "user-1",
+		Content:  "ゆるり",
+		IsOwner:  false,
+	})
+	if err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
+	}
+	if got != (Decision{Action: "noop"}) {
+		t.Fatalf("RunTurn() = %+v, want %+v", got, Decision{Action: "noop"})
+	}
+}
 
-			got, err := client.RunTurn(ctx, TurnInput{
-				AuthorID: "user-1",
-				Content:  tc.content,
-				IsOwner:  tc.isOwner,
-			})
-			if err != nil {
-				t.Fatalf("RunTurn() error = %v", err)
-			}
+func TestRunTurnSendsModelAndEffortParams(t *testing.T) {
+	t.Setenv("YURURI_MOCK_CODEX_HELPER", "1")
 
-			want := Decision{
-				Action:  "reply",
-				Content: fallbackReply(tc.isOwner),
-			}
-			if got != want {
-				t.Fatalf("RunTurn() = %+v, want %+v", got, want)
-			}
-		})
+	client := &Client{
+		command:         os.Args[0],
+		args:            []string{"-test.run=^TestMockCodexProcess$", "--", "turn-completed-empty-with-model-effort"},
+		model:           "gpt-5.3-codex",
+		reasoningEffort: "medium",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	got, err := client.RunTurn(ctx, TurnInput{
+		AuthorID: "user-1",
+		Content:  "ping",
+		IsOwner:  false,
+	})
+	if err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
+	}
+	if got != (Decision{Action: "noop"}) {
+		t.Fatalf("RunTurn() = %+v, want %+v", got, Decision{Action: "noop"})
+	}
+}
+
+func assertThreadStartModelParam(t *testing.T, params map[string]any, expectedModel string) {
+	t.Helper()
+
+	model, ok := params["model"]
+	if strings.TrimSpace(expectedModel) == "" {
+		if ok {
+			t.Fatalf("thread/start params unexpectedly contains model: %#v", params)
+		}
+		return
+	}
+	if !ok {
+		t.Fatalf("thread/start params missing model: %#v", params)
+	}
+	if model != expectedModel {
+		t.Fatalf("thread/start params model = %#v, want %#v", model, expectedModel)
+	}
+}
+
+func assertTurnStartEffortParam(t *testing.T, params map[string]any, expectedEffort string) {
+	t.Helper()
+
+	effort, ok := params["effort"]
+	if strings.TrimSpace(expectedEffort) == "" {
+		if ok {
+			t.Fatalf("turn/start params unexpectedly contains effort: %#v", params)
+		}
+		return
+	}
+	if !ok {
+		t.Fatalf("turn/start params missing effort: %#v", params)
+	}
+	if effort != expectedEffort {
+		t.Fatalf("turn/start params effort = %#v, want %#v", effort, expectedEffort)
 	}
 }
 
@@ -299,40 +375,53 @@ func TestMockCodexProcess(t *testing.T) {
 	dec.UseNumber()
 	enc := json.NewEncoder(os.Stdout)
 
+	expectedModel := ""
+	expectedEffort := ""
+
 	switch scenario {
 	case "turn-completed-empty":
-		readMockRequest(t, dec, initRequestID, "initialize")
-		writeMockResponse(t, enc, initRequestID, map[string]any{"ok": true})
-
-		readMockNotification(t, dec, "initialized")
-
-		threadReq := readMockRequest(t, dec, threadRequestID, "thread/start")
-		threadParams := decodeNotificationParams(threadReq.Params)
-		developerInstructions, ok := threadParams["developerInstructions"].(string)
-		if !ok || strings.TrimSpace(developerInstructions) == "" {
-			t.Fatalf("thread/start params missing developerInstructions: %#v", threadParams)
-		}
-
-		writeMockResponse(t, enc, threadRequestID, map[string]any{
-			"thread": map[string]any{"id": "thread-1"},
-		})
-
-		readMockRequest(t, dec, turnRequestID, "turn/start")
-		writeMockResponse(t, enc, turnRequestID, map[string]any{"ok": true})
-		writeMockNotification(t, enc, "turn/completed", map[string]any{
-			"output": map[string]any{"text": " \n\t "},
-		})
+	case "turn-completed-empty-with-model-effort":
+		expectedModel = "gpt-5.3-codex"
+		expectedEffort = "medium"
 	default:
 		t.Fatalf("unknown mock codex scenario: %s", scenario)
 	}
+
+	readMockRequest(t, dec, initRequestID, "initialize")
+	writeMockResponse(t, enc, initRequestID, map[string]any{"ok": true})
+
+	readMockNotification(t, dec, "initialized")
+
+	threadReq := readMockRequest(t, dec, threadRequestID, "thread/start")
+	threadParams := decodeNotificationParams(threadReq.Params)
+	developerInstructions, ok := threadParams["developerInstructions"].(string)
+	if !ok || strings.TrimSpace(developerInstructions) == "" {
+		t.Fatalf("thread/start params missing developerInstructions: %#v", threadParams)
+	}
+	assertThreadStartModelParam(t, threadParams, expectedModel)
+
+	writeMockResponse(t, enc, threadRequestID, map[string]any{
+		"thread": map[string]any{"id": "thread-1"},
+	})
+
+	turnReq := readMockRequest(t, dec, turnRequestID, "turn/start")
+	turnParams := decodeNotificationParams(turnReq.Params)
+	assertTurnStartEffortParam(t, turnParams, expectedEffort)
+	writeMockResponse(t, enc, turnRequestID, map[string]any{"ok": true})
+	writeMockNotification(t, enc, "turn/completed", map[string]any{
+		"output": map[string]any{"text": " \n\t "},
+	})
 }
 
 func TestTurnStartParams(t *testing.T) {
 	t.Parallel()
 
-	params := turnStartParams("thread-1", "prompt")
+	params := turnStartParams("thread-1", "prompt", "medium")
 	if got := params["threadId"]; got != "thread-1" {
 		t.Fatalf("turnStartParams().threadId = %v, want thread-1", got)
+	}
+	if got := params["effort"]; got != "medium" {
+		t.Fatalf("turnStartParams().effort = %v, want medium", got)
 	}
 
 	input, ok := params["input"].([]map[string]any)
@@ -368,6 +457,15 @@ func TestTurnStartParams(t *testing.T) {
 	}
 	if !replyRequiresContent(oneOf) {
 		t.Fatalf("turnStartParams().outputSchema reply rule must require non-empty content: %#v", oneOf)
+	}
+}
+
+func TestTurnStartParamsOmitsEffortWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	params := turnStartParams("thread-1", "prompt", "")
+	if _, ok := params["effort"]; ok {
+		t.Fatalf("turnStartParams() unexpectedly contains effort: %#v", params)
 	}
 }
 
