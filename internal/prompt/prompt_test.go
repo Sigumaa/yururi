@@ -36,6 +36,7 @@ func TestBuildMessageBundle(t *testing.T) {
 		GuildID:     "g1",
 		ChannelID:   "c1",
 		ChannelName: "chat",
+		MergedCount: 4,
 		IsOwner:     true,
 		Current: RuntimeMessage{
 			ID:         "m2",
@@ -58,6 +59,9 @@ func TestBuildMessageBundle(t *testing.T) {
 	}
 	if !strings.Contains(bundle.UserPrompt, "ゆるり、これ見えてる？") {
 		t.Fatalf("UserPrompt missing current message: %q", bundle.UserPrompt)
+	}
+	if !strings.Contains(bundle.UserPrompt, "バースト統合件数: 4") {
+		t.Fatalf("UserPrompt missing merged count: %q", bundle.UserPrompt)
 	}
 	if !strings.Contains(bundle.DeveloperInstructions, "MCPツール") {
 		t.Fatalf("DeveloperInstructions missing MCP guidance: %q", bundle.DeveloperInstructions)

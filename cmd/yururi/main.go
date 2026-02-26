@@ -59,7 +59,7 @@ func main() {
 		if mergedCount > 1 {
 			log.Printf("channel burst coalesced: guild=%s channel=%s merged=%d latest_message=%s", m.GuildID, m.ChannelID, mergedCount, m.ID)
 		}
-		handleMessage(ctx, cfg, aiClient, gateway, discord, m)
+		handleMessage(ctx, cfg, aiClient, gateway, discord, m, mergedCount)
 	})
 
 	errCh := make(chan error, 1)
@@ -103,7 +103,7 @@ func main() {
 	log.Printf("yururi stopped")
 }
 
-func handleMessage(rootCtx context.Context, cfg config.Config, runtime *codex.Client, gateway *discordx.Gateway, session *discordgo.Session, m *discordgo.MessageCreate) {
+func handleMessage(rootCtx context.Context, cfg config.Config, runtime *codex.Client, gateway *discordx.Gateway, session *discordgo.Session, m *discordgo.MessageCreate, mergedCount int) {
 	authorID := ""
 	authorIsBot := false
 	authorName := ""
@@ -130,7 +130,8 @@ func handleMessage(rootCtx context.Context, cfg config.Config, runtime *codex.Cl
 	ctx, cancel := context.WithTimeout(rootCtx, 3*time.Minute)
 	defer cancel()
 
-	history, err := gateway.ReadMessageHistory(ctx, m.ChannelID, m.ID, 30)
+	historyLimit := calculateHistoryLimit(mergedCount)
+	history, err := gateway.ReadMessageHistory(ctx, m.ChannelID, m.ID, historyLimit)
 	if err != nil {
 		log.Printf("read history failed: guild=%s channel=%s message=%s err=%v", m.GuildID, m.ChannelID, m.ID, err)
 	}
@@ -151,6 +152,7 @@ func handleMessage(rootCtx context.Context, cfg config.Config, runtime *codex.Cl
 		GuildID:     m.GuildID,
 		ChannelID:   m.ChannelID,
 		ChannelName: channelName,
+		MergedCount: mergedCount,
 		IsOwner:     authorID != "" && authorID == cfg.Persona.OwnerUserID,
 		Current: prompt.RuntimeMessage{
 			ID:         m.ID,
@@ -283,4 +285,23 @@ func displayAuthorName(m *discordgo.MessageCreate) string {
 		return m.Author.Username
 	}
 	return m.Author.ID
+}
+
+func calculateHistoryLimit(mergedCount int) int {
+	const (
+		minLimit = 30
+		maxLimit = 100
+		margin   = 12
+	)
+	if mergedCount <= 1 {
+		return minLimit
+	}
+	limit := mergedCount + margin
+	if limit < minLimit {
+		limit = minLimit
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	return limit
 }

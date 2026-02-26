@@ -39,6 +39,7 @@ type MessageInput struct {
 	GuildID     string
 	ChannelID   string
 	ChannelName string
+	MergedCount int
 	IsOwner     bool
 	Current     RuntimeMessage
 	Recent      []RuntimeMessage
@@ -142,6 +143,7 @@ func BuildMessageBundle(instructions WorkspaceInstructions, input MessageInput) 
 		"以下は現在の入力情報です。",
 		fmt.Sprintf("Guild ID: %s", input.GuildID),
 		fmt.Sprintf("チャンネル: %s (ID: %s)", input.ChannelName, input.ChannelID),
+		fmt.Sprintf("バースト統合件数: %d", mergedCountForPrompt(input.MergedCount)),
 		fmt.Sprintf("owner_user_idか: %s", ownerText),
 		"",
 		"## 直近のメッセージ",
@@ -249,4 +251,11 @@ func valueOrFallback(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func mergedCountForPrompt(v int) int {
+	if v <= 0 {
+		return 1
+	}
+	return v
 }
