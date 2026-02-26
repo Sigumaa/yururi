@@ -123,19 +123,13 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (Decision, error)
 	if threadResp.Error != nil {
 		return Decision{}, rpcCallError("thread/start", threadResp.Error)
 	}
-	threadID := extractString(threadResp.Result, "thread_id", "threadId", "id")
-	if threadID == "" {
-		threadID = "default"
+	threadID, err := extractThreadID(threadResp.Result)
+	if err != nil {
+		return Decision{}, fmt.Errorf("extract thread id: %w", err)
 	}
 
 	prompt := buildPrompt(input)
-	turnParams := map[string]any{
-		"threadId": threadID,
-		"input": []map[string]any{{
-			"type": "text",
-			"text": prompt,
-		}},
-	}
+	turnParams := turnStartParams(threadID, prompt)
 	if err := sendRequest(enc, turnRequestID, "turn/start", turnParams); err != nil {
 		return Decision{}, err
 	}
@@ -344,6 +338,108 @@ func threadStartParams() map[string]any {
 		"approvalPolicy": "never",
 		"sandbox":        "workspace-write",
 	}
+}
+
+func turnStartParams(threadID string, prompt string) map[string]any {
+	return map[string]any{
+		"threadId": threadID,
+		"input": []map[string]any{{
+			"type": "text",
+			"text": prompt,
+		}},
+		"outputSchema": decisionOutputSchema(),
+	}
+}
+
+func decisionOutputSchema() map[string]any {
+	return map[string]any{
+		"oneOf": []map[string]any{
+			{
+				"type": "object",
+				"properties": map[string]any{
+					"action": map[string]any{
+						"const": "noop",
+					},
+				},
+				"required":             []string{"action"},
+				"additionalProperties": false,
+			},
+			{
+				"type": "object",
+				"properties": map[string]any{
+					"action": map[string]any{
+						"const": "reply",
+					},
+					"content": map[string]any{
+						"type":      "string",
+						"minLength": 1,
+					},
+				},
+				"required":             []string{"action", "content"},
+				"additionalProperties": false,
+			},
+		},
+	}
+}
+
+func extractThreadID(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", errors.New("thread/start result is empty")
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("decode thread/start result: %w", err)
+	}
+
+	if id := extractThreadIDFromThread(result); id != "" {
+		return id, nil
+	}
+	if id := extractTopLevelString(result, "threadId", "thread_id"); id != "" {
+		return id, nil
+	}
+	return "", errors.New("thread id not found in thread/start result")
+}
+
+func extractThreadIDFromThread(result map[string]any) string {
+	threadRaw, ok := result["thread"]
+	if !ok {
+		return ""
+	}
+
+	thread, ok := threadRaw.(map[string]any)
+	if !ok {
+		return ""
+	}
+
+	idRaw, ok := thread["id"]
+	if !ok {
+		return ""
+	}
+
+	id, ok := idRaw.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(id)
+}
+
+func extractTopLevelString(result map[string]any, keys ...string) string {
+	for _, key := range keys {
+		raw, ok := result[key]
+		if !ok {
+			continue
+		}
+		value, ok := raw.(string)
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func withCodexHomeEnv(base []string, homeDir string) []string {

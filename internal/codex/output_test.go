@@ -41,6 +41,31 @@ func TestParseDecisionOutput(t *testing.T) {
 			raw:  "```json\n{\"action\":\"noop\"}\n```",
 			want: Decision{Action: "noop"},
 		},
+		{
+			name: "mixed text with code fence",
+			raw:  "before\n```json\n{\"action\":\"reply\",\"content\":\"ok\"}\n```\nafter",
+			want: Decision{Action: "reply", Content: "ok"},
+		},
+		{
+			name: "first valid decision in mixed objects",
+			raw:  `prefix {"foo":"bar"} middle {"action":"noop"} suffix {"action":"reply","content":"later"}`,
+			want: Decision{Action: "noop"},
+		},
+		{
+			name: "comma after first object",
+			raw:  `{"action":"noop"}, {"action":"reply","content":"later"}`,
+			want: Decision{Action: "noop"},
+		},
+		{
+			name: "skip invalid decision then parse next",
+			raw:  `prefix {"action":"reply"} middle {"action":"reply","content":"ok"} suffix`,
+			want: Decision{Action: "reply", Content: "ok"},
+		},
+		{
+			name: "brace in string content",
+			raw:  `note {"action":"reply","content":"a { brace } value"} done`,
+			want: Decision{Action: "reply", Content: "a { brace } value"},
+		},
 	}
 
 	for _, tc := range tests {

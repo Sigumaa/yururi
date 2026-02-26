@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -68,6 +69,117 @@ func TestThreadStartParams(t *testing.T) {
 	}
 }
 
+func TestTurnStartParams(t *testing.T) {
+	t.Parallel()
+
+	params := turnStartParams("thread-1", "prompt")
+	if got := params["threadId"]; got != "thread-1" {
+		t.Fatalf("turnStartParams().threadId = %v, want thread-1", got)
+	}
+
+	input, ok := params["input"].([]map[string]any)
+	if !ok {
+		t.Fatalf("turnStartParams().input type = %T, want []map[string]any", params["input"])
+	}
+	if len(input) != 1 {
+		t.Fatalf("turnStartParams().input len = %d, want 1", len(input))
+	}
+	if input[0]["type"] != "text" {
+		t.Fatalf("turnStartParams().input[0].type = %v, want text", input[0]["type"])
+	}
+	if input[0]["text"] != "prompt" {
+		t.Fatalf("turnStartParams().input[0].text = %v, want prompt", input[0]["text"])
+	}
+
+	schema, ok := params["outputSchema"].(map[string]any)
+	if !ok {
+		t.Fatalf("turnStartParams().outputSchema type = %T, want map[string]any", params["outputSchema"])
+	}
+	oneOf, ok := schema["oneOf"].([]map[string]any)
+	if !ok {
+		t.Fatalf("turnStartParams().outputSchema.oneOf type = %T, want []map[string]any", schema["oneOf"])
+	}
+	if len(oneOf) != 2 {
+		t.Fatalf("turnStartParams().outputSchema.oneOf len = %d, want 2", len(oneOf))
+	}
+	if !hasActionConst(oneOf, "noop") {
+		t.Fatalf("turnStartParams().outputSchema missing noop action in %#v", oneOf)
+	}
+	if !hasActionConst(oneOf, "reply") {
+		t.Fatalf("turnStartParams().outputSchema missing reply action in %#v", oneOf)
+	}
+	if !replyRequiresContent(oneOf) {
+		t.Fatalf("turnStartParams().outputSchema reply rule must require non-empty content: %#v", oneOf)
+	}
+}
+
+func TestExtractThreadID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		raw     json.RawMessage
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "prefer thread.id",
+			raw:  json.RawMessage(`{"thread":{"id":"thread-primary"},"threadId":"thread-fallback","thread_id":"thread-fallback2"}`),
+			want: "thread-primary",
+		},
+		{
+			name: "fallback threadId",
+			raw:  json.RawMessage(`{"threadId":"thread-camel"}`),
+			want: "thread-camel",
+		},
+		{
+			name: "fallback thread_id",
+			raw:  json.RawMessage(`{"thread_id":"thread-snake"}`),
+			want: "thread-snake",
+		},
+		{
+			name: "blank thread.id uses fallback",
+			raw:  json.RawMessage(`{"thread":{"id":"  "},"threadId":"thread-camel"}`),
+			want: "thread-camel",
+		},
+		{
+			name:    "missing thread id",
+			raw:     json.RawMessage(`{"thread":{"name":"x"}}`),
+			wantErr: true,
+		},
+		{
+			name:    "wrong thread.id type",
+			raw:     json.RawMessage(`{"thread":{"id":123}}`),
+			wantErr: true,
+		},
+		{
+			name:    "result is not object",
+			raw:     json.RawMessage(`["thread-1"]`),
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := extractThreadID(tc.raw)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("extractThreadID() error = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("extractThreadID() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("extractThreadID() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWithCodexHomeEnv(t *testing.T) {
 	t.Parallel()
 
@@ -106,4 +218,60 @@ func countEntries(env []string, prefix string) int {
 		}
 	}
 	return count
+}
+
+func hasActionConst(oneOf []map[string]any, action string) bool {
+	for _, candidate := range oneOf {
+		properties, ok := candidate["properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		actionProp, ok := properties["action"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if actionProp["const"] == action {
+			return true
+		}
+	}
+	return false
+}
+
+func replyRequiresContent(oneOf []map[string]any) bool {
+	for _, candidate := range oneOf {
+		properties, ok := candidate["properties"].(map[string]any)
+		if !ok {
+			continue
+		}
+		actionProp, ok := properties["action"].(map[string]any)
+		if !ok || actionProp["const"] != "reply" {
+			continue
+		}
+
+		required, ok := candidate["required"].([]string)
+		if !ok || !containsString(required, "content") {
+			return false
+		}
+		contentProp, ok := properties["content"].(map[string]any)
+		if !ok {
+			return false
+		}
+		if contentProp["type"] != "string" {
+			return false
+		}
+		if contentProp["minLength"] != 1 {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
