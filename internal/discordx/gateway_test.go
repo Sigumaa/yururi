@@ -1,0 +1,68 @@
+package discordx
+
+import (
+	"testing"
+
+	"github.com/bwmarrin/discordgo"
+)
+
+func TestAuthorDisplayName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		msg  *discordgo.Message
+		want string
+	}{
+		{
+			name: "nil message",
+			msg:  nil,
+			want: "unknown",
+		},
+		{
+			name: "nil author",
+			msg:  &discordgo.Message{},
+			want: "unknown",
+		},
+		{
+			name: "member nick preferred",
+			msg: &discordgo.Message{
+				Author: &discordgo.User{ID: "u1", Username: "user", GlobalName: "global"},
+				Member: &discordgo.Member{Nick: "nick"},
+			},
+			want: "nick",
+		},
+		{
+			name: "member nil uses global name",
+			msg: &discordgo.Message{
+				Author: &discordgo.User{ID: "u1", Username: "user", GlobalName: "global"},
+			},
+			want: "global",
+		},
+		{
+			name: "fallback username",
+			msg: &discordgo.Message{
+				Author: &discordgo.User{ID: "u1", Username: "user"},
+			},
+			want: "user",
+		},
+		{
+			name: "fallback id",
+			msg: &discordgo.Message{
+				Author: &discordgo.User{ID: "u1"},
+			},
+			want: "u1",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := authorDisplayName(tc.msg)
+			if got != tc.want {
+				t.Fatalf("authorDisplayName() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

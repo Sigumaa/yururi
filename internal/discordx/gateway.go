@@ -309,7 +309,7 @@ func authorDisplayName(msg *discordgo.Message) string {
 	if msg == nil || msg.Author == nil {
 		return "unknown"
 	}
-	if strings.TrimSpace(msg.Member.Nick) != "" {
+	if msg.Member != nil && strings.TrimSpace(msg.Member.Nick) != "" {
 		return msg.Member.Nick
 	}
 	if strings.TrimSpace(msg.Author.GlobalName) != "" {
