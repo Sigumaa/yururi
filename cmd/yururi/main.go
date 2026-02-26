@@ -12,6 +12,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/sigumaa/yururi/internal/codex"
 	"github.com/sigumaa/yururi/internal/config"
+	"github.com/sigumaa/yururi/internal/dispatch"
 	"github.com/sigumaa/yururi/internal/discordx"
 	"github.com/sigumaa/yururi/internal/heartbeat"
 	"github.com/sigumaa/yururi/internal/mcpserver"
@@ -54,6 +55,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	dispatcher := dispatch.New(ctx, 128, 1200*time.Millisecond, func(m *discordgo.MessageCreate, mergedCount int) {
+		if mergedCount > 1 {
+			log.Printf("channel burst coalesced: guild=%s channel=%s merged=%d latest_message=%s", m.GuildID, m.ChannelID, mergedCount, m.ID)
+		}
+		handleMessage(ctx, cfg, aiClient, gateway, discord, m)
+	})
+
 	errCh := make(chan error, 1)
 	go func() {
 		if err := mcpSrv.Start(ctx); err != nil {
@@ -63,7 +71,9 @@ func main() {
 	}()
 
 	discord.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
-		go handleMessage(ctx, cfg, aiClient, gateway, s, m)
+		if dropped := dispatcher.Enqueue(m); dropped {
+			log.Printf("dispatcher queue drop occurred: guild=%s channel=%s latest_message=%s", m.GuildID, m.ChannelID, m.ID)
+		}
 	})
 
 	if err := discord.Open(); err != nil {
