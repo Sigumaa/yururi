@@ -39,6 +39,7 @@ func main() {
 			authorID = m.Author.ID
 			authorIsBot = m.Author.Bot
 		}
+		log.Printf("message received: message=%s guild=%s channel=%s author=%s", m.ID, m.GuildID, m.ChannelID, authorID)
 
 		incoming := policy.Incoming{
 			GuildID:     m.GuildID,
@@ -47,13 +48,16 @@ func main() {
 			AuthorIsBot: authorIsBot,
 			WebhookID:   m.WebhookID,
 		}
-		if !policy.ShouldProcess(cfg.Discord, incoming) {
+		allowed, reason := policy.Evaluate(cfg.Discord, incoming)
+		if !allowed {
+			log.Printf("message filtered: message=%s guild=%s channel=%s author=%s reason=%s", m.ID, m.GuildID, m.ChannelID, authorID, reason)
 			return
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 
+		log.Printf("codex turn started: message=%s guild=%s channel=%s author=%s", m.ID, m.GuildID, m.ChannelID, authorID)
 		decision, err := runtime.RunTurn(ctx, codex.TurnInput{
 			AuthorID: authorID,
 			Content:  m.Content,
@@ -61,6 +65,12 @@ func main() {
 		})
 		if err != nil {
 			log.Printf("run codex turn failed: guild=%s channel=%s message=%s err=%v", m.GuildID, m.ChannelID, m.ID, err)
+			return
+		}
+		log.Printf("codex turn completed: message=%s guild=%s channel=%s author=%s action=%s", m.ID, m.GuildID, m.ChannelID, authorID, decision.Action)
+
+		if decision.Action == "noop" {
+			log.Printf("noop decision: message=%s guild=%s channel=%s author=%s", m.ID, m.GuildID, m.ChannelID, authorID)
 			return
 		}
 
