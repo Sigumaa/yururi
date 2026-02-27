@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/sigumaa/yururi/internal/codex"
@@ -275,6 +276,33 @@ func TestTrimLogAny(t *testing.T) {
 	if got := trimLogAny(math.NaN(), 20); got != "NaN" {
 		t.Fatalf("trimLogAny(NaN, 20) = %q, want %q", got, "NaN")
 	}
+}
+
+func TestRunShutdownStepCompletes(t *testing.T) {
+	t.Parallel()
+
+	if timedOut := runShutdownStep("test_complete", 50*time.Millisecond, func() {}); timedOut {
+		t.Fatal("runShutdownStep() timed out, want completed")
+	}
+}
+
+func TestRunShutdownStepTimeout(t *testing.T) {
+	t.Parallel()
+
+	block := make(chan struct{})
+	started := time.Now()
+	timedOut := runShutdownStep("test_timeout", 20*time.Millisecond, func() {
+		<-block
+	})
+	if !timedOut {
+		close(block)
+		t.Fatal("runShutdownStep() timedOut = false, want true")
+	}
+	if elapsed := time.Since(started); elapsed < 15*time.Millisecond {
+		close(block)
+		t.Fatalf("runShutdownStep() elapsed = %s, want >= 15ms", elapsed)
+	}
+	close(block)
 }
 
 func TestExpandObserveChannelIDsByCategory(t *testing.T) {

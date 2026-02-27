@@ -94,7 +94,6 @@ func main() {
 	}
 	aiClient := codex.NewClient(cfg.Codex, cfg.MCP.URL)
 	coordinator := orchestrator.New(aiClient)
-	defer aiClient.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -126,7 +125,6 @@ func main() {
 	if err := discord.Open(); err != nil {
 		log.Fatalf("open discord session: %v", err)
 	}
-	defer discord.Close()
 
 	if cfg.Heartbeat.Enabled {
 		runner, err := heartbeat.NewRunner(cfg.Heartbeat.Cron, cfg.Heartbeat.Timezone, func(runCtx context.Context) error {
@@ -163,6 +161,14 @@ func main() {
 			log.Printf("mcp server stopped with error: %v", err)
 		}
 	}
+	stop()
+	log.Printf("event=shutdown_started")
+	runShutdownStep("discord_close", 2*time.Second, func() {
+		_ = discord.Close()
+	})
+	runShutdownStep("codex_close", 2*time.Second, func() {
+		aiClient.Close()
+	})
 	log.Printf("yururi stopped")
 }
 
@@ -707,6 +713,34 @@ func logTurnToolCall(eventPrefix string, runID string, threadID string, turnID s
 		trimLogAny(toolCall.Arguments, maxHeartbeatLogValueLen),
 		trimLogAny(toolCall.Result, maxHeartbeatLogValueLen),
 	)
+}
+
+func runShutdownStep(name string, timeout time.Duration, fn func()) bool {
+	if fn == nil {
+		return false
+	}
+	started := time.Now()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+
+	if timeout <= 0 {
+		<-done
+		log.Printf("event=shutdown_step_completed step=%s latency_ms=%d", name, durationMS(time.Since(started)))
+		return false
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		log.Printf("event=shutdown_step_completed step=%s latency_ms=%d", name, durationMS(time.Since(started)))
+		return false
+	case <-timer.C:
+		log.Printf("event=shutdown_step_timeout step=%s timeout_ms=%d", name, durationMS(timeout))
+		return true
+	}
 }
 
 func resolveObserveTextChannels(session *discordgo.Session, discordCfg config.DiscordConfig) ([]string, error) {
