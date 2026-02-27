@@ -17,6 +17,7 @@ import (
 	"github.com/sigumaa/yururi/internal/heartbeat"
 	"github.com/sigumaa/yururi/internal/mcpserver"
 	"github.com/sigumaa/yururi/internal/memory"
+	"github.com/sigumaa/yururi/internal/orchestrator"
 	"github.com/sigumaa/yururi/internal/policy"
 	"github.com/sigumaa/yururi/internal/prompt"
 )
@@ -51,6 +52,7 @@ func main() {
 		log.Fatalf("create mcp server: %v", err)
 	}
 	aiClient := codex.NewClient(cfg.Codex, cfg.MCP.URL)
+	coordinator := orchestrator.New(aiClient)
 	defer aiClient.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -60,7 +62,7 @@ func main() {
 		if mergedCount > 1 {
 			log.Printf("channel burst coalesced: guild=%s channel=%s merged=%d latest_message=%s", m.GuildID, m.ChannelID, mergedCount, m.ID)
 		}
-		handleMessage(ctx, cfg, aiClient, gateway, discord, m, mergedCount)
+		handleMessage(ctx, cfg, coordinator, gateway, discord, m, mergedCount)
 	})
 
 	errCh := make(chan error, 1)
@@ -104,7 +106,7 @@ func main() {
 	log.Printf("yururi stopped")
 }
 
-func handleMessage(rootCtx context.Context, cfg config.Config, runtime *codex.Client, gateway *discordx.Gateway, session *discordgo.Session, m *discordgo.MessageCreate, mergedCount int) {
+func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orchestrator.Coordinator, gateway *discordx.Gateway, session *discordgo.Session, m *discordgo.MessageCreate, mergedCount int) {
 	authorID := ""
 	authorIsBot := false
 	authorName := ""
@@ -166,7 +168,8 @@ func handleMessage(rootCtx context.Context, cfg config.Config, runtime *codex.Cl
 	})
 
 	log.Printf("codex turn started: message=%s guild=%s channel=%s author=%s", m.ID, m.GuildID, m.ChannelID, authorID)
-	result, err := runtime.RunTurn(ctx, codex.TurnInput{
+	channelKey := orchestrator.ChannelKey(m.GuildID, m.ChannelID)
+	result, err := coordinator.RunMessageTurn(ctx, channelKey, codex.TurnInput{
 		BaseInstructions:      bundle.BaseInstructions,
 		DeveloperInstructions: bundle.DeveloperInstructions,
 		UserPrompt:            bundle.UserPrompt,
