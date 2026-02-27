@@ -238,14 +238,7 @@ func (c *Config) normalize() {
 				normalized.Headers[key] = val
 			}
 		}
-		if normalized.BearerToken != "" {
-			if normalized.Headers == nil {
-				normalized.Headers = map[string]string{}
-			}
-			if _, exists := normalized.Headers["Authorization"]; !exists {
-				normalized.Headers["Authorization"] = "Bearer " + normalized.BearerToken
-			}
-		}
+		normalized = applyBearerTokenToServer(normalized)
 		c.Codex.MCPServers[name] = normalized
 	}
 
@@ -342,13 +335,66 @@ func applyEnvOverrides(cfg *Config) {
 		server := cfg.Codex.MCPServers[name]
 		token := strings.TrimSpace(v)
 		if token != "" {
-			if server.Headers == nil {
-				server.Headers = map[string]string{}
-			}
-			server.Headers["Authorization"] = "Bearer " + token
+			server.BearerToken = token
+			server = applyBearerTokenToServer(server)
 			cfg.Codex.MCPServers[name] = server
 		}
 	}
+}
+
+func applyBearerTokenToServer(server CodexMCPServerConfig) CodexMCPServerConfig {
+	token := strings.TrimSpace(server.BearerToken)
+	if token == "" {
+		return server
+	}
+	if server.Headers == nil {
+		server.Headers = map[string]string{}
+	}
+	server.Headers["Authorization"] = "Bearer " + token
+	if usesMCPRemote(server.Command, server.Args) {
+		server.Args = ensureMCPRemoteAuthorizationHeader(server.Args, token)
+	}
+	return server
+}
+
+func usesMCPRemote(command string, args []string) bool {
+	if strings.EqualFold(strings.TrimSpace(command), "mcp-remote") {
+		return true
+	}
+	if len(args) == 0 {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(args[0]), "mcp-remote")
+}
+
+func ensureMCPRemoteAuthorizationHeader(args []string, token string) []string {
+	authHeader := "Authorization: Bearer " + strings.TrimSpace(token)
+	out := append([]string(nil), args...)
+	foundAuth := false
+	for i := 0; i < len(out); i++ {
+		arg := strings.TrimSpace(out[i])
+		if strings.EqualFold(arg, "--header") && i+1 < len(out) {
+			value := strings.TrimSpace(out[i+1])
+			if strings.HasPrefix(strings.ToLower(value), "authorization:") {
+				out[i+1] = authHeader
+				foundAuth = true
+			}
+			i++
+			continue
+		}
+		lower := strings.ToLower(arg)
+		if strings.HasPrefix(lower, "--header=") {
+			value := strings.TrimSpace(arg[len("--header="):])
+			if strings.HasPrefix(strings.ToLower(value), "authorization:") {
+				out[i] = "--header=" + authHeader
+				foundAuth = true
+			}
+		}
+	}
+	if foundAuth {
+		return out
+	}
+	return append(out, "--header", authHeader)
 }
 
 func parseArgs(v string) []string {

@@ -70,7 +70,7 @@
 2. Utility tools:
    - `get_current_time(timezone?)`（未指定時`Asia/Tokyo`）
    - `x_search(query, allowed_x_handles?, excluded_x_handles?, from_date?, to_date?, enable_image_understanding?, enable_video_understanding?)`
-   - `twilog-mcp`（設定済みの場合、ownerのX投稿確認に利用。`codex.mcp_servers.twilog-mcp.bearer_token` でBearer設定可）
+   - `twilog-mcp`（設定済みの場合、ownerのX投稿確認に利用。`codex.mcp_servers.twilog-mcp.bearer_token` でBearer設定可。`mcp-remote` 利用時は認証ヘッダを自動付与）
 3. Workspace doc tools:
    - `read_workspace_doc`
    - `append_workspace_doc`

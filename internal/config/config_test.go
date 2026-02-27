@@ -237,6 +237,12 @@ codex:
 	if server.Headers["Authorization"] != "Bearer config-token" {
 		t.Fatalf("Authorization header = %q, want %q", server.Headers["Authorization"], "Bearer config-token")
 	}
+	if len(server.Args) != 4 {
+		t.Fatalf("twilog args len = %d, want 4 (%v)", len(server.Args), server.Args)
+	}
+	if server.Args[2] != "--header" || server.Args[3] != "Authorization: Bearer config-token" {
+		t.Fatalf("twilog auth args = %v, want --header Authorization: Bearer config-token", server.Args)
+	}
 }
 
 func TestLoadEnvTwilogTokenOverridesConfigBearerToken(t *testing.T) {
@@ -272,5 +278,52 @@ codex:
 	}
 	if server.Headers["Authorization"] != "Bearer env-token" {
 		t.Fatalf("Authorization header = %q, want %q", server.Headers["Authorization"], "Bearer env-token")
+	}
+	if len(server.Args) != 4 {
+		t.Fatalf("twilog args len = %d, want 4 (%v)", len(server.Args), server.Args)
+	}
+	if server.Args[2] != "--header" || server.Args[3] != "Authorization: Bearer env-token" {
+		t.Fatalf("twilog auth args = %v, want --header Authorization: Bearer env-token", server.Args)
+	}
+}
+
+func TestLoadRewritesExistingMCPRemoteAuthorizationHeader(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := `discord:
+  token: "token"
+  guild_id: "guild"
+  target_channel_ids: ["channel"]
+persona:
+  owner_user_id: "owner"
+codex:
+  command: "codex"
+  args: ["--search", "app-server", "--listen", "stdio://"]
+  mcp_servers:
+    twilog-mcp:
+      command: "npx"
+      args: ["mcp-remote", "https://twilog-mcp.togetter.dev/mcp", "--header", "Authorization: Bearer old-token"]
+      bearer_token: "new-token"
+`
+	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	server, ok := cfg.Codex.MCPServers["twilog-mcp"]
+	if !ok {
+		t.Fatal("twilog-mcp config missing")
+	}
+	if server.Headers["Authorization"] != "Bearer new-token" {
+		t.Fatalf("Authorization header = %q, want %q", server.Headers["Authorization"], "Bearer new-token")
+	}
+	if len(server.Args) != 4 {
+		t.Fatalf("twilog args len = %d, want 4 (%v)", len(server.Args), server.Args)
+	}
+	if server.Args[2] != "--header" || server.Args[3] != "Authorization: Bearer new-token" {
+		t.Fatalf("twilog auth args = %v, want rewritten auth header", server.Args)
 	}
 }
