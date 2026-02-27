@@ -550,9 +550,9 @@ func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string)
 		prompt.HeartbeatSystemPrompt,
 		"",
 		"これは自律観察モードです。",
-		"指定チャンネルを観察し、返信するほどではないが共有価値のある所感は times チャンネルへ send_message で短く投稿してください。",
+		"指定チャンネルを観察し、返信するほどではないが共有価値のある所感は times チャンネルへ send_message で共有してよいです。",
 		"返信・times投稿を含むすべての出力で SOUL.md のキャラクター・語り口を維持してください。",
-		"times投稿は作業報告ではなく、ゆるり個人の気持ちや考えのメモとして書いてください。",
+		"times投稿は形式を固定せず、作業手順の列挙よりも、その時に感じたこと・考えたことを優先してください。",
 		"ownerの最近のX投稿確認には twilog-mcp が利用可能なら優先してください。",
 	}
 	if strings.TrimSpace(timesChannelID) != "" {
@@ -609,12 +609,12 @@ func buildHeartbeatWhisperMessage(result codex.TurnResult) (string, bool) {
 			return "", false
 		}
 		if strings.TrimSpace(summary) != "" {
-			return pickThoughtWhisperText(summary)
+			return selectPersonaWhisperText(summary)
 		}
 	}
 	text := strings.TrimSpace(result.AssistantText)
 	if text != "" && !hasDecision {
-		return pickThoughtWhisperText(text)
+		return selectPersonaWhisperText(text)
 	}
 	return "", false
 }
@@ -663,7 +663,7 @@ func buildMessageWhisperMessage(result codex.TurnResult) (string, bool) {
 		return "", false
 	}
 	if text != "" {
-		return pickThoughtWhisperText(text)
+		return selectPersonaWhisperText(text)
 	}
 	return "", false
 }
@@ -678,7 +678,7 @@ func hasDeliveryToolCall(toolCalls []codex.MCPToolCall) bool {
 	return false
 }
 
-func pickThoughtWhisperText(text string) (string, bool) {
+func selectPersonaWhisperText(text string) (string, bool) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return "", false

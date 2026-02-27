@@ -82,7 +82,7 @@ func TestRunHeartbeatTurnPostsTimesWhisperWhenWorkExists(t *testing.T) {
 	runtime := &heartbeatRuntimeStub{
 		result: codex.TurnResult{
 			Status:        "completed",
-			AssistantText: "今日は話題の流れがつながってて、ちょっとわくわくした。",
+			AssistantText: "THOUGHT_NOTE_123",
 		},
 	}
 	sender := &heartbeatWhisperSenderStub{}
@@ -96,7 +96,7 @@ func TestRunHeartbeatTurnPostsTimesWhisperWhenWorkExists(t *testing.T) {
 	if sender.messages[0].channelID != "times" {
 		t.Fatalf("times whisper channel = %q, want times", sender.messages[0].channelID)
 	}
-	if !strings.Contains(sender.messages[0].content, "わくわく") {
+	if !strings.Contains(sender.messages[0].content, "THOUGHT_NOTE_123") {
 		t.Fatalf("times whisper content missing summary: %q", sender.messages[0].content)
 	}
 }
@@ -218,7 +218,7 @@ func TestBuildMessageWhisperMessage(t *testing.T) {
 		{
 			name: "skip operational report",
 			result: codex.TurnResult{
-				AssistantText: "HEARTBEAT.md の内容を確認しました。必要な作業を実施しました。",
+				AssistantText: "completed. executed.",
 			},
 			wantOK: false,
 		},
@@ -284,14 +284,14 @@ func TestTrimLogAny(t *testing.T) {
 	}
 }
 
-func TestPickThoughtWhisperText(t *testing.T) {
+func TestSelectPersonaWhisperText(t *testing.T) {
 	t.Parallel()
 
-	if got, ok := pickThoughtWhisperText("確認しました。実施しました。"); ok || got != "" {
-		t.Fatalf("pickThoughtWhisperText(operational) = (%q, %v), want empty/false", got, ok)
+	if got, ok := selectPersonaWhisperText("completed. executed."); ok || got != "" {
+		t.Fatalf("selectPersonaWhisperText(operational) = (%q, %v), want empty/false", got, ok)
 	}
-	if got, ok := pickThoughtWhisperText("確認しました。今日は流れがつながっておもしろい。"); !ok || !strings.Contains(got, "おもしろい") {
-		t.Fatalf("pickThoughtWhisperText(mixed) = (%q, %v), want thought line", got, ok)
+	if got, ok := selectPersonaWhisperText("completed\nTHOUGHT_LINE_1"); !ok || got != "THOUGHT_LINE_1" {
+		t.Fatalf("selectPersonaWhisperText(mixed) = (%q, %v), want thought line", got, ok)
 	}
 }
 
