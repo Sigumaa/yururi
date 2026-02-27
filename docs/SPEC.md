@@ -89,9 +89,10 @@
 4. Codex turn開始。
 5. 必要に応じてMCP tool呼び出し。
 6. 最終`DecisionResult`反映。
-7. typing停止・メタログ出力。
-8. heartbeat時は`HEARTBEAT.md`の指示に従って必要時のみ行動する。
-9. heartbeat実行ログには`assistant_text`、decision要約（parse可否含む）、tool call詳細（server/tool/status/arguments/result）を出力する。
+7. `append_workspace_doc`/`replace_workspace_doc`で`MEMORY.md`更新を検知した場合、当該チャンネルのセッションをリセットし次回投稿は新規`thread/start`で開始する。
+8. typing停止・メタログ出力。
+9. heartbeat時は`HEARTBEAT.md`の指示に従って必要時のみ行動する。
+10. heartbeat実行ログには`assistant_text`、decision要約（parse可否含む）、tool call詳細（server/tool/status/arguments/result）を出力する。
 
 ## 制約と運用ルール
 1. 指定チャンネル外では動作しない。
