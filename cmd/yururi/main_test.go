@@ -286,6 +286,9 @@ func TestBuildAutonomyPromptIncludesTimesRecentReference(t *testing.T) {
 	if !strings.Contains(got, "times直近投稿参照") {
 		t.Fatalf("autonomy prompt missing times history section: %q", got)
 	}
+	if !strings.Contains(got, "毎回参照や引用をする必要はありません") {
+		t.Fatalf("autonomy prompt missing optional X reference guidance: %q", got)
+	}
 	if !strings.Contains(got, "- first") || !strings.Contains(got, "- second") {
 		t.Fatalf("autonomy prompt missing times history entries: %q", got)
 	}

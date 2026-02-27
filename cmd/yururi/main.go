@@ -578,7 +578,7 @@ func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string,
 		"返信・times投稿を含むすべての出力で SOUL.md のキャラクター・語り口を維持してください。",
 		"times投稿は形式を固定しません。独り言として、思ったことを SOUL.md のペルソナでそのままつぶやいてください。",
 		"times投稿では人に説明する口調や、誰かに話しかける口調は避けてください。",
-		"ownerの最近のX投稿確認には twilog-mcp が利用可能なら優先してください。",
+		"ownerの最近のX投稿は必要なときだけ twilog-mcp で確認してよいです。毎回参照や引用をする必要はありません。",
 	}
 	if strings.TrimSpace(timesChannelID) != "" {
 		lines = append(lines, "times_channel_id="+strings.TrimSpace(timesChannelID))
