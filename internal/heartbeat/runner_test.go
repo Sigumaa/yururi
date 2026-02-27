@@ -46,3 +46,44 @@ func TestRunnerStart(t *testing.T) {
 	}
 	t.Fatalf("heartbeat handler was not called")
 }
+
+func TestExecuteUsesStartContext(t *testing.T) {
+	t.Parallel()
+
+	parentCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var called atomic.Int32
+	var sawCanceled atomic.Bool
+
+	r := &Runner{
+		handler: func(ctx context.Context) error {
+			called.Add(1)
+			select {
+			case <-ctx.Done():
+				sawCanceled.Store(true)
+			default:
+			}
+			return nil
+		},
+		timezone: "UTC",
+		rootCtx:  parentCtx,
+	}
+
+	r.execute()
+	if called.Load() != 1 {
+		t.Fatalf("execute() call count = %d, want 1", called.Load())
+	}
+	if sawCanceled.Load() {
+		t.Fatal("execute() saw canceled context before cancel")
+	}
+
+	cancel()
+	r.execute()
+	if called.Load() != 2 {
+		t.Fatalf("execute() call count after cancel = %d, want 2", called.Load())
+	}
+	if !sawCanceled.Load() {
+		t.Fatal("execute() should see canceled context after cancel")
+	}
+}

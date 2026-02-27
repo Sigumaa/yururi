@@ -107,6 +107,7 @@
 13. `discord.observe_channel_ids[]` は読み取り専用チャンネルとし、観察・調査対象に含めてよいが直接投稿はしない。
 14. `discord.observe_category_ids[]` が設定されている場合、起動時に該当カテゴリ配下のテキストチャンネル（`GuildText`）を `observe_channel_ids[]` に展開して読み取り対象へ追加する。
 15. `autonomy.enabled`がtrueの場合、通常heartbeatとは別に自律観察ループを実行し、観察可能チャンネルやtwilog-mcpを使った調査を行ってよい。
+16. heartbeat/autonomyの定期実行は固定タイムアウトで打ち切らない。前回実行が継続中の場合のみ次回tickをスキップする。
 
 ## 制約と運用ルール
 1. 指定チャンネル外では動作しない。

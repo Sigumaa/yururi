@@ -16,6 +16,7 @@ type Runner struct {
 	running  atomic.Bool
 	handler  func(context.Context) error
 	timezone string
+	rootCtx  context.Context
 }
 
 func NewRunner(spec string, timezone string, handler func(context.Context) error) (*Runner, error) {
@@ -47,6 +48,10 @@ func NewRunner(spec string, timezone string, handler func(context.Context) error
 }
 
 func (r *Runner) Start(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	r.rootCtx = ctx
 	r.cron.Start()
 	go func() {
 		<-ctx.Done()
@@ -61,10 +66,10 @@ func (r *Runner) execute() {
 		return
 	}
 	defer r.running.Store(false)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-
+	ctx := r.rootCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := r.handler(ctx); err != nil {
 		log.Printf("heartbeat failed: timezone=%s err=%v", r.timezone, err)
 	}
