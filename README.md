@@ -64,6 +64,9 @@ go run ./cmd/yururi -config runtime/config.yaml
 - `memory_upsert_channel_intent`
 - `memory_upsert_task`
 - `memory_query`
+- `read_workspace_doc`
+- `append_workspace_doc`
+- `replace_workspace_doc`
 
 ## 検証
 

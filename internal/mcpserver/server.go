@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -16,10 +19,12 @@ import (
 type Server struct {
 	bind            string
 	defaultTimezone string
+	workspaceDir    string
 	discord         *discordx.Gateway
 	memory          *memory.Store
 	mcpServer       *mcp.Server
 	httpServer      *http.Server
+	docMu           sync.Mutex
 }
 
 type EmptyArgs struct{}
@@ -152,10 +157,32 @@ type MemoryMatch struct {
 	Excerpt string `json:"excerpt"`
 }
 
-func New(bind string, defaultTimezone string, discord *discordx.Gateway, store *memory.Store) (*Server, error) {
+type WorkspaceDocArgs struct {
+	Name string `json:"name" jsonschema:"YURURI.md/SOUL.md/MEMORY.md/HEARTBEAT.md"`
+}
+
+type WorkspaceDocWriteArgs struct {
+	Name    string `json:"name" jsonschema:"YURURI.md/SOUL.md/MEMORY.md/HEARTBEAT.md"`
+	Content string `json:"content" jsonschema:"書き込む内容"`
+}
+
+type WorkspaceDocResult struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+func New(bind string, defaultTimezone string, workspaceDir string, discord *discordx.Gateway, store *memory.Store) (*Server, error) {
 	bind = strings.TrimSpace(bind)
 	if bind == "" {
 		return nil, errors.New("mcp bind is required")
+	}
+	workspaceDir = strings.TrimSpace(workspaceDir)
+	if workspaceDir == "" {
+		return nil, errors.New("workspace dir is required")
+	}
+	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create workspace dir: %w", err)
 	}
 	if discord == nil {
 		return nil, errors.New("discord gateway is required")
@@ -175,6 +202,7 @@ func New(bind string, defaultTimezone string, discord *discordx.Gateway, store *
 	s := &Server{
 		bind:            bind,
 		defaultTimezone: defaultTimezone,
+		workspaceDir:    filepath.Clean(workspaceDir),
 		discord:         discord,
 		memory:          store,
 		mcpServer:       m,
@@ -287,6 +315,21 @@ func (s *Server) registerTools() {
 		Name:        "memory_query",
 		Description: "永続メモをキーワード検索する",
 	}, s.handleMemoryQuery)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "read_workspace_doc",
+		Description: "ワークスペースの4軸ドキュメントを読み取る",
+	}, s.handleReadWorkspaceDoc)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "append_workspace_doc",
+		Description: "ワークスペースの4軸ドキュメントへ追記する",
+	}, s.handleAppendWorkspaceDoc)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "replace_workspace_doc",
+		Description: "ワークスペースの4軸ドキュメントを置換する",
+	}, s.handleReplaceWorkspaceDoc)
 }
 
 func (s *Server) handleReadMessageHistory(ctx context.Context, _ *mcp.CallToolRequest, args ReadHistoryArgs) (*mcp.CallToolResult, ReadHistoryResult, error) {
@@ -446,4 +489,83 @@ func (s *Server) handleMemoryQuery(ctx context.Context, _ *mcp.CallToolRequest, 
 		matches = append(matches, MemoryMatch{Path: r.Path, Excerpt: r.Excerpt})
 	}
 	return nil, MemoryQueryResult{Matches: matches}, nil
+}
+
+func (s *Server) handleReadWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
+	path, err := s.workspaceDocPath(args.Name)
+	if err != nil {
+		return nil, WorkspaceDocResult{}, err
+	}
+
+	s.docMu.Lock()
+	defer s.docMu.Unlock()
+
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, WorkspaceDocResult{}, fmt.Errorf("read workspace doc: %w", err)
+	}
+	return nil, WorkspaceDocResult{Name: filepath.Base(path), Path: path, Content: string(body)}, nil
+}
+
+func (s *Server) handleAppendWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocWriteArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
+	path, err := s.workspaceDocPath(args.Name)
+	if err != nil {
+		return nil, WorkspaceDocResult{}, err
+	}
+	content := strings.TrimSpace(args.Content)
+	if content == "" {
+		return nil, WorkspaceDocResult{}, errors.New("content is required")
+	}
+
+	s.docMu.Lock()
+	defer s.docMu.Unlock()
+
+	existing, readErr := os.ReadFile(path)
+	if readErr != nil {
+		return nil, WorkspaceDocResult{}, fmt.Errorf("read workspace doc: %w", readErr)
+	}
+	builder := strings.Builder{}
+	builder.WriteString(string(existing))
+	if !strings.HasSuffix(builder.String(), "\n") {
+		builder.WriteString("\n")
+	}
+	builder.WriteString("\n")
+	builder.WriteString(content)
+	builder.WriteString("\n")
+
+	final := builder.String()
+	if err := os.WriteFile(path, []byte(final), 0o644); err != nil {
+		return nil, WorkspaceDocResult{}, fmt.Errorf("append workspace doc: %w", err)
+	}
+	return nil, WorkspaceDocResult{Name: filepath.Base(path), Path: path, Content: final}, nil
+}
+
+func (s *Server) handleReplaceWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocWriteArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
+	path, err := s.workspaceDocPath(args.Name)
+	if err != nil {
+		return nil, WorkspaceDocResult{}, err
+	}
+	content := strings.TrimSpace(args.Content)
+	if content == "" {
+		return nil, WorkspaceDocResult{}, errors.New("content is required")
+	}
+
+	s.docMu.Lock()
+	defer s.docMu.Unlock()
+
+	final := content + "\n"
+	if err := os.WriteFile(path, []byte(final), 0o644); err != nil {
+		return nil, WorkspaceDocResult{}, fmt.Errorf("replace workspace doc: %w", err)
+	}
+	return nil, WorkspaceDocResult{Name: filepath.Base(path), Path: path, Content: final}, nil
+}
+
+func (s *Server) workspaceDocPath(name string) (string, error) {
+	base := strings.TrimSpace(filepath.Base(name))
+	switch base {
+	case "YURURI.md", "SOUL.md", "MEMORY.md", "HEARTBEAT.md":
+		return filepath.Join(s.workspaceDir, base), nil
+	default:
+		return "", fmt.Errorf("unsupported workspace doc: %s", name)
+	}
 }

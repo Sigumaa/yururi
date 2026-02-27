@@ -228,6 +228,7 @@ func buildDeveloperInstructions() string {
 		"メッセージ送信・返信・リアクションはMCPツールを使って行うこと。",
 		"調査や複数ツール呼び出しを行う場合は必要に応じてstart_typingを使うこと。",
 		"会話本文を永続保存しないこと。必要な知識だけmemoryツールへ保存すること。",
+		"ユーザーから『覚えて』と言われた内容は、MEMORY.mdまたはHEARTBEAT.mdへ反映すること。優先してread_workspace_doc / append_workspace_doc / replace_workspace_docを使うこと。",
 		"指定チャンネルの趣旨に合わせて口調と出力内容を調整すること。",
 	}, "\n")
 }

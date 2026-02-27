@@ -12,8 +12,8 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/sigumaa/yururi/internal/codex"
 	"github.com/sigumaa/yururi/internal/config"
-	"github.com/sigumaa/yururi/internal/dispatch"
 	"github.com/sigumaa/yururi/internal/discordx"
+	"github.com/sigumaa/yururi/internal/dispatch"
 	"github.com/sigumaa/yururi/internal/heartbeat"
 	"github.com/sigumaa/yururi/internal/mcpserver"
 	"github.com/sigumaa/yururi/internal/memory"
@@ -46,7 +46,7 @@ func main() {
 	discord.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsMessageContent
 
 	gateway := discordx.NewGateway(discord, cfg.Discord)
-	mcpSrv, err := mcpserver.New(cfg.MCP.Bind, cfg.Heartbeat.Timezone, gateway, memoryStore)
+	mcpSrv, err := mcpserver.New(cfg.MCP.Bind, cfg.Heartbeat.Timezone, cfg.Codex.WorkspaceDir, gateway, memoryStore)
 	if err != nil {
 		log.Fatalf("create mcp server: %v", err)
 	}

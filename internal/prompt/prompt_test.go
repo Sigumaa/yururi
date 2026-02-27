@@ -66,6 +66,9 @@ func TestBuildMessageBundle(t *testing.T) {
 	if !strings.Contains(bundle.DeveloperInstructions, "MCPツール") {
 		t.Fatalf("DeveloperInstructions missing MCP guidance: %q", bundle.DeveloperInstructions)
 	}
+	if !strings.Contains(bundle.DeveloperInstructions, "append_workspace_doc") {
+		t.Fatalf("DeveloperInstructions missing workspace doc tool guidance: %q", bundle.DeveloperInstructions)
+	}
 }
 
 func TestBuildHeartbeatBundle(t *testing.T) {
