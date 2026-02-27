@@ -21,6 +21,8 @@
    - `discord.excluded_channel_ids[]`
    - `discord.allowed_bot_user_ids[]`
    - `persona.owner_user_id`
+   - `persona.times_channel_id`
+   - `persona.times_min_interval_sec`
    - `codex.command`（既定: `codex`）
    - `codex.args`（既定: `["--search","app-server","--listen","stdio://"]`）
    - `codex.workspace_dir`
@@ -93,6 +95,7 @@
 8. typing停止・メタログ出力。
 9. heartbeat時は`HEARTBEAT.md`の指示に従って必要時のみ行動する。
 10. heartbeat実行ログには`assistant_text`、decision要約（parse可否含む）、tool call詳細（server/tool/status/arguments/result）を出力する。
+11. `persona.times_channel_id`が設定されている場合、heartbeatで実作業（tool実行・非noop判断・エラー）が発生したときのみ短い自律つぶやきを投稿する。投稿間隔は`persona.times_min_interval_sec`で抑制する。
 
 ## 制約と運用ルール
 1. 指定チャンネル外では動作しない。
