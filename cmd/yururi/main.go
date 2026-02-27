@@ -550,7 +550,7 @@ func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string)
 		prompt.HeartbeatSystemPrompt,
 		"",
 		"これは自律観察モードです。",
-		"指定チャンネルを観察し、返信するほどではないが共有価値のある所感は times チャンネルへ send_message で短く投稿してください。",
+		"指定チャンネルを観察し、返信するほどではないが共有価値のある所感は times チャンネルへ send_message で短く投稿してください。文体はやわらかい口語を優先してください。",
 		"ownerの最近のX投稿確認には twilog-mcp が利用可能なら優先してください。",
 	}
 	if strings.TrimSpace(timesChannelID) != "" {
