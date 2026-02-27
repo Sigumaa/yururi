@@ -96,19 +96,67 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (TurnResult, erro
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		if err := c.ensureSessionLocked(); err != nil {
-			return TurnResult{}, err
+	var result TurnResult
+	err := c.runWithSessionRetryLocked(ctx, func() error {
+		threadID, err := c.startThreadLocked(input)
+		if err != nil {
+			return err
 		}
-		result, err := c.runTurnLocked(ctx, input)
-		if err == nil {
-			return result, nil
-		}
-		lastErr = err
-		c.stopSessionLocked()
+		result, err = c.startTurnLocked(threadID, input.UserPrompt)
+		return err
+	})
+	if err != nil {
+		return TurnResult{}, err
 	}
-	return TurnResult{}, lastErr
+	return result, nil
+}
+
+func (c *Client) StartThread(ctx context.Context, input TurnInput) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var threadID string
+	err := c.runWithSessionRetryLocked(ctx, func() error {
+		var err error
+		threadID, err = c.startThreadLocked(input)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return threadID, nil
+}
+
+func (c *Client) StartTurn(ctx context.Context, threadID string, prompt string) (TurnResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var result TurnResult
+	err := c.runWithSessionRetryLocked(ctx, func() error {
+		var err error
+		result, err = c.startTurnLocked(threadID, prompt)
+		return err
+	})
+	if err != nil {
+		return TurnResult{}, err
+	}
+	return result, nil
+}
+
+func (c *Client) SteerTurn(ctx context.Context, threadID string, expectedTurnID string, prompt string) (TurnResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var result TurnResult
+	err := c.runWithSessionRetryLocked(ctx, func() error {
+		var err error
+		result, err = c.steerTurnLocked(threadID, expectedTurnID, prompt)
+		return err
+	})
+	if err != nil {
+		return TurnResult{}, err
+	}
+	return result, nil
 }
 
 func (c *Client) Close() {
@@ -185,29 +233,91 @@ func (c *Client) ensureSessionLocked() error {
 	return nil
 }
 
-func (c *Client) runTurnLocked(_ context.Context, input TurnInput) (TurnResult, error) {
+func (c *Client) runWithSessionRetryLocked(ctx context.Context, run func() error) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := c.ensureSessionLocked(); err != nil {
+			return err
+		}
+		if err := run(); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			c.stopSessionLocked()
+		}
+	}
+	return lastErr
+}
+
+func (c *Client) startThreadLocked(input TurnInput) (string, error) {
 	if c.session == nil {
-		return TurnResult{}, errors.New("codex session is not initialized")
+		return "", errors.New("codex session is not initialized")
 	}
 
 	threadReqID := c.nextRequestIDLocked()
 	if err := sendRequest(c.session.enc, threadReqID, "thread/start", threadStartParams(input, c.model, c.workspaceDir, c.reasoningEffort, c.mcpURL)); err != nil {
-		return TurnResult{}, err
+		return "", err
 	}
 	threadResp, err := readUntilResponse(c.session.dec, c.session.enc, threadReqID, nil)
 	if err != nil {
-		return TurnResult{}, fmt.Errorf("read thread/start response: %w", err)
+		return "", fmt.Errorf("read thread/start response: %w", err)
 	}
 	if threadResp.Error != nil {
-		return TurnResult{}, rpcCallError("thread/start", threadResp.Error)
+		return "", rpcCallError("thread/start", threadResp.Error)
 	}
 	threadID, err := extractThreadID(threadResp.Result)
 	if err != nil {
-		return TurnResult{}, fmt.Errorf("extract thread id: %w", err)
+		return "", fmt.Errorf("extract thread id: %w", err)
+	}
+	return threadID, nil
+}
+
+func (c *Client) startTurnLocked(threadID string, prompt string) (TurnResult, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return TurnResult{}, errors.New("thread id is required")
+	}
+
+	result, err := c.runTurnRequestLocked("turn/start", turnStartParams(threadID, prompt))
+	if err != nil {
+		return TurnResult{}, err
+	}
+	result.ThreadID = threadID
+	return result, nil
+}
+
+func (c *Client) steerTurnLocked(threadID string, expectedTurnID string, prompt string) (TurnResult, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return TurnResult{}, errors.New("thread id is required")
+	}
+	expectedTurnID = strings.TrimSpace(expectedTurnID)
+	if expectedTurnID == "" {
+		return TurnResult{}, errors.New("expected turn id is required")
+	}
+
+	result, err := c.runTurnRequestLocked("turn/steer", turnSteerParams(threadID, expectedTurnID, prompt))
+	if err != nil {
+		return TurnResult{}, err
+	}
+	result.ThreadID = threadID
+	return result, nil
+}
+
+func (c *Client) runTurnRequestLocked(method string, params map[string]any) (TurnResult, error) {
+	if c.session == nil {
+		return TurnResult{}, errors.New("codex session is not initialized")
 	}
 
 	turnReqID := c.nextRequestIDLocked()
-	if err := sendRequest(c.session.enc, turnReqID, "turn/start", turnStartParams(threadID, input.UserPrompt)); err != nil {
+	if err := sendRequest(c.session.enc, turnReqID, method, params); err != nil {
 		return TurnResult{}, err
 	}
 
@@ -220,10 +330,10 @@ func (c *Client) runTurnLocked(_ context.Context, input TurnInput) (TurnResult, 
 
 	turnResp, err := readUntilResponse(c.session.dec, c.session.enc, turnReqID, onNotification)
 	if err != nil {
-		return TurnResult{}, fmt.Errorf("read turn/start response: %w", err)
+		return TurnResult{}, fmt.Errorf("read %s response: %w", method, err)
 	}
 	if turnResp.Error != nil {
-		return TurnResult{}, rpcCallError("turn/start", turnResp.Error)
+		return TurnResult{}, rpcCallError(method, turnResp.Error)
 	}
 	turnID, _ := extractTurnID(turnResp.Result)
 	aggregator.turnID = turnID
@@ -245,7 +355,6 @@ func (c *Client) runTurnLocked(_ context.Context, input TurnInput) (TurnResult, 
 	}
 
 	return TurnResult{
-		ThreadID:      threadID,
 		TurnID:        aggregator.turnID,
 		Status:        aggregator.status,
 		AssistantText: aggregator.FinalText(),
@@ -757,12 +866,24 @@ func threadStartParams(input TurnInput, model string, cwd string, reasoningEffor
 func turnStartParams(threadID string, prompt string) map[string]any {
 	return map[string]any{
 		"threadId": threadID,
-		"input": []map[string]any{{
-			"type":          "text",
-			"text":          prompt,
-			"text_elements": []any{},
-		}},
+		"input":    turnInput(prompt),
 	}
+}
+
+func turnSteerParams(threadID string, expectedTurnID string, prompt string) map[string]any {
+	return map[string]any{
+		"threadId":       threadID,
+		"expectedTurnId": expectedTurnID,
+		"input":          turnInput(prompt),
+	}
+}
+
+func turnInput(prompt string) []map[string]any {
+	return []map[string]any{{
+		"type":          "text",
+		"text":          prompt,
+		"text_elements": []any{},
+	}}
 }
 
 func extractThreadID(raw json.RawMessage) (string, error) {

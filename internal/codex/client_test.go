@@ -135,6 +135,106 @@ func TestRunTurnHandlesUserInputRequest(t *testing.T) {
 	}
 }
 
+func TestTurnSteerParamsIncludesExpectedTurnID(t *testing.T) {
+	t.Parallel()
+
+	params := turnSteerParams("thread-1", "turn-1", "follow up")
+	if params["threadId"] != "thread-1" {
+		t.Fatalf("turnSteerParams threadId = %#v, want thread-1", params["threadId"])
+	}
+	if params["expectedTurnId"] != "turn-1" {
+		t.Fatalf("turnSteerParams expectedTurnId = %#v, want turn-1", params["expectedTurnId"])
+	}
+	input, ok := params["input"].([]map[string]any)
+	if !ok || len(input) != 1 {
+		t.Fatalf("turnSteerParams input = %#v, want single text input", params["input"])
+	}
+	if input[0]["type"] != "text" {
+		t.Fatalf("turnSteerParams input[0].type = %#v, want text", input[0]["type"])
+	}
+	if input[0]["text"] != "follow up" {
+		t.Fatalf("turnSteerParams input[0].text = %#v, want %q", input[0]["text"], "follow up")
+	}
+}
+
+func TestStartThreadStartTurnAndSteerTurn(t *testing.T) {
+	t.Setenv("YURURI_MOCK_CODEX_HELPER", "1")
+	workspaceDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	client := NewClient(config.CodexConfig{
+		Command:         os.Args[0],
+		Args:            []string{"-test.run=^TestMockCodexProcess$", "--", "split-start-steer"},
+		Model:           "gpt-5.3-codex",
+		ReasoningEffort: "medium",
+		WorkspaceDir:    workspaceDir,
+		HomeDir:         homeDir,
+	}, "http://127.0.0.1:39393/mcp")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	threadID, err := client.StartThread(ctx, TurnInput{
+		BaseInstructions:      "base",
+		DeveloperInstructions: "dev",
+	})
+	if err != nil {
+		t.Fatalf("StartThread() error = %v", err)
+	}
+	if threadID != "thread-1" {
+		t.Fatalf("StartThread() thread id = %q, want thread-1", threadID)
+	}
+
+	startResult, err := client.StartTurn(ctx, threadID, "start prompt")
+	if err != nil {
+		t.Fatalf("StartTurn() error = %v", err)
+	}
+	if startResult.Status != "completed" {
+		t.Fatalf("StartTurn() status = %q, want completed", startResult.Status)
+	}
+	if startResult.ThreadID != "thread-1" {
+		t.Fatalf("StartTurn() thread id = %q, want thread-1", startResult.ThreadID)
+	}
+	if startResult.TurnID != "turn-1" {
+		t.Fatalf("StartTurn() turn id = %q, want turn-1", startResult.TurnID)
+	}
+	if startResult.AssistantText != "start reply" {
+		t.Fatalf("StartTurn() assistant text = %q, want %q", startResult.AssistantText, "start reply")
+	}
+	if len(startResult.ToolCalls) != 1 {
+		t.Fatalf("StartTurn() tool calls = %d, want 1", len(startResult.ToolCalls))
+	}
+	if startResult.ToolCalls[0].Server != "discord" {
+		t.Fatalf("StartTurn() tool server = %q, want discord", startResult.ToolCalls[0].Server)
+	}
+	if startResult.ToolCalls[0].Tool != "read_message_history" {
+		t.Fatalf("StartTurn() tool name = %q, want read_message_history", startResult.ToolCalls[0].Tool)
+	}
+	if startResult.ToolCalls[0].Status != "completed" {
+		t.Fatalf("StartTurn() tool status = %q, want completed", startResult.ToolCalls[0].Status)
+	}
+
+	steerResult, err := client.SteerTurn(ctx, threadID, startResult.TurnID, "steer prompt")
+	if err != nil {
+		t.Fatalf("SteerTurn() error = %v", err)
+	}
+	if steerResult.Status != "completed" {
+		t.Fatalf("SteerTurn() status = %q, want completed", steerResult.Status)
+	}
+	if steerResult.ThreadID != "thread-1" {
+		t.Fatalf("SteerTurn() thread id = %q, want thread-1", steerResult.ThreadID)
+	}
+	if steerResult.TurnID != "turn-2" {
+		t.Fatalf("SteerTurn() turn id = %q, want turn-2", steerResult.TurnID)
+	}
+	if steerResult.AssistantText != "steer reply" {
+		t.Fatalf("SteerTurn() assistant text = %q, want %q", steerResult.AssistantText, "steer reply")
+	}
+	if len(steerResult.ToolCalls) != 0 {
+		t.Fatalf("SteerTurn() tool calls = %d, want 0", len(steerResult.ToolCalls))
+	}
+}
+
 func TestExtractThreadIDSupportsString(t *testing.T) {
 	t.Parallel()
 
@@ -172,57 +272,123 @@ func TestMockCodexProcess(t *testing.T) {
 
 	readMockNotification(t, dec, "initialized")
 
+	switch scenario {
+	case "assistant-text":
+		runMockAssistantTextScenario(t, dec, enc)
+	case "user-input-request":
+		runMockUserInputRequestScenario(t, dec, enc)
+	case "split-start-steer":
+		runMockSplitStartSteerScenario(t, dec, enc)
+	default:
+		t.Fatalf("unknown mock codex scenario: %s", scenario)
+	}
+}
+
+func runMockAssistantTextScenario(t *testing.T, dec *json.Decoder, enc *json.Encoder) {
+	t.Helper()
+
+	expectMockThreadStart(t, dec, enc)
+	expectMockTurnStart(t, dec, enc, turnRequestID, "thread-1", "ゆるり、見えてる？", "turn-1")
+
+	writeMockNotification(t, enc, "item/completed", map[string]any{
+		"item": map[string]any{"type": "agentMessage", "text": "こんにちは、見えてるよ。"},
+	})
+	writeMockNotification(t, enc, "turn/completed", map[string]any{
+		"turn": map[string]any{"id": "turn-1", "status": "completed"},
+	})
+}
+
+func runMockUserInputRequestScenario(t *testing.T, dec *json.Decoder, enc *json.Encoder) {
+	t.Helper()
+
+	expectMockThreadStart(t, dec, enc)
+	expectMockTurnStart(t, dec, enc, turnRequestID, "thread-1", "test", "turn-1")
+
+	writeMockRequestFromServer(t, enc, json.RawMessage(`60`), "item/tool/requestUserInput", map[string]any{
+		"questions": []map[string]any{{
+			"id":      "q1",
+			"options": []map[string]any{{"label": "Decline"}, {"label": "Accept"}},
+		}},
+	})
+
+	resp := readRawMessage(t, dec)
+	if strings.TrimSpace(string(resp.ID)) != "60" {
+		t.Fatalf("request response id = %s, want 60", string(resp.ID))
+	}
+	result := decodeNotificationParams(resp.Result)
+	answersRaw, ok := result["answers"].(map[string]any)
+	if !ok {
+		t.Fatalf("request response answers missing: %#v", result)
+	}
+	q1Raw, ok := answersRaw["q1"].(map[string]any)
+	if !ok {
+		t.Fatalf("request response answers.q1 missing: %#v", answersRaw)
+	}
+	answerList, ok := q1Raw["answers"].([]any)
+	if !ok || len(answerList) == 0 {
+		t.Fatalf("request response answers list missing: %#v", q1Raw)
+	}
+	if answerList[0] != "Decline" {
+		t.Fatalf("request response answer = %#v, want Decline", answerList[0])
+	}
+
+	writeMockNotification(t, enc, "turn/completed", map[string]any{
+		"turn": map[string]any{"id": "turn-1", "status": "completed"},
+	})
+}
+
+func runMockSplitStartSteerScenario(t *testing.T, dec *json.Decoder, enc *json.Encoder) {
+	t.Helper()
+
+	expectMockThreadStart(t, dec, enc)
+	expectMockTurnStart(t, dec, enc, turnRequestID, "thread-1", "start prompt", "turn-1")
+
+	writeMockNotification(t, enc, "item/completed", map[string]any{
+		"item": map[string]any{
+			"type":      "mcpToolCall",
+			"server":    "discord",
+			"tool":      "read_message_history",
+			"status":    "completed",
+			"arguments": map[string]any{"channel_id": "123"},
+			"result":    map[string]any{"messages": []any{}},
+		},
+	})
+	writeMockNotification(t, enc, "item/completed", map[string]any{
+		"item": map[string]any{"type": "agentMessage", "text": "start reply"},
+	})
+	writeMockNotification(t, enc, "turn/completed", map[string]any{
+		"turn": map[string]any{"id": "turn-1", "status": "completed"},
+	})
+
+	steerReq := readMockRequest(t, dec, turnRequestID+1, "turn/steer")
+	steerParams := decodeNotificationParams(steerReq.Params)
+	assertTurnSteerParams(t, steerParams, "thread-1", "turn-1", "steer prompt")
+	writeMockResponse(t, enc, turnRequestID+1, map[string]any{"turn": map[string]any{"id": "turn-2"}})
+
+	writeMockNotification(t, enc, "item/completed", map[string]any{
+		"item": map[string]any{"type": "agentMessage", "text": "steer reply"},
+	})
+	writeMockNotification(t, enc, "turn/completed", map[string]any{
+		"turn": map[string]any{"id": "turn-2", "status": "completed"},
+	})
+}
+
+func expectMockThreadStart(t *testing.T, dec *json.Decoder, enc *json.Encoder) {
+	t.Helper()
+
 	threadReq := readMockRequest(t, dec, threadRequestID, "thread/start")
 	threadParams := decodeNotificationParams(threadReq.Params)
 	assertThreadConfig(t, threadParams)
 	writeMockResponse(t, enc, threadRequestID, map[string]any{"thread": map[string]any{"id": "thread-1"}})
+}
 
-	readMockRequest(t, dec, turnRequestID, "turn/start")
-	writeMockResponse(t, enc, turnRequestID, map[string]any{"turn": map[string]any{"id": "turn-1"}})
+func expectMockTurnStart(t *testing.T, dec *json.Decoder, enc *json.Encoder, requestID int, expectedThreadID string, expectedPrompt string, responseTurnID string) {
+	t.Helper()
 
-	switch scenario {
-	case "assistant-text":
-		writeMockNotification(t, enc, "item/completed", map[string]any{
-			"item": map[string]any{"type": "agentMessage", "text": "こんにちは、見えてるよ。"},
-		})
-		writeMockNotification(t, enc, "turn/completed", map[string]any{
-			"turn": map[string]any{"id": "turn-1", "status": "completed"},
-		})
-	case "user-input-request":
-		writeMockRequestFromServer(t, enc, json.RawMessage(`60`), "item/tool/requestUserInput", map[string]any{
-			"questions": []map[string]any{{
-				"id":      "q1",
-				"options": []map[string]any{{"label": "Decline"}, {"label": "Accept"}},
-			}},
-		})
-
-		resp := readRawMessage(t, dec)
-		if strings.TrimSpace(string(resp.ID)) != "60" {
-			t.Fatalf("request response id = %s, want 60", string(resp.ID))
-		}
-		result := decodeNotificationParams(resp.Result)
-		answersRaw, ok := result["answers"].(map[string]any)
-		if !ok {
-			t.Fatalf("request response answers missing: %#v", result)
-		}
-		q1Raw, ok := answersRaw["q1"].(map[string]any)
-		if !ok {
-			t.Fatalf("request response answers.q1 missing: %#v", answersRaw)
-		}
-		answerList, ok := q1Raw["answers"].([]any)
-		if !ok || len(answerList) == 0 {
-			t.Fatalf("request response answers list missing: %#v", q1Raw)
-		}
-		if answerList[0] != "Decline" {
-			t.Fatalf("request response answer = %#v, want Decline", answerList[0])
-		}
-
-		writeMockNotification(t, enc, "turn/completed", map[string]any{
-			"turn": map[string]any{"id": "turn-1", "status": "completed"},
-		})
-	default:
-		t.Fatalf("unknown mock codex scenario: %s", scenario)
-	}
+	turnReq := readMockRequest(t, dec, requestID, "turn/start")
+	turnParams := decodeNotificationParams(turnReq.Params)
+	assertTurnStartParams(t, turnParams, expectedThreadID, expectedPrompt)
+	writeMockResponse(t, enc, requestID, map[string]any{"turn": map[string]any{"id": responseTurnID}})
 }
 
 func assertThreadConfig(t *testing.T, params map[string]any) {
@@ -251,6 +417,56 @@ func assertThreadConfig(t *testing.T, params map[string]any) {
 	}
 	if discord["url"] != "http://127.0.0.1:39393/mcp" {
 		t.Fatalf("thread/start config.mcp_servers.discord.url = %#v", discord["url"])
+	}
+}
+
+func assertTurnStartParams(t *testing.T, params map[string]any, expectedThreadID string, expectedPrompt string) {
+	t.Helper()
+
+	if params["threadId"] != expectedThreadID {
+		t.Fatalf("turn/start threadId = %#v, want %q", params["threadId"], expectedThreadID)
+	}
+	if _, ok := params["expectedTurnId"]; ok {
+		t.Fatalf("turn/start expectedTurnId should be absent: %#v", params["expectedTurnId"])
+	}
+	assertTurnInputParams(t, params, expectedPrompt)
+}
+
+func assertTurnSteerParams(t *testing.T, params map[string]any, expectedThreadID string, expectedTurnID string, expectedPrompt string) {
+	t.Helper()
+
+	if params["threadId"] != expectedThreadID {
+		t.Fatalf("turn/steer threadId = %#v, want %q", params["threadId"], expectedThreadID)
+	}
+	if params["expectedTurnId"] != expectedTurnID {
+		t.Fatalf("turn/steer expectedTurnId = %#v, want %q", params["expectedTurnId"], expectedTurnID)
+	}
+	assertTurnInputParams(t, params, expectedPrompt)
+}
+
+func assertTurnInputParams(t *testing.T, params map[string]any, expectedPrompt string) {
+	t.Helper()
+
+	inputRaw, ok := params["input"].([]any)
+	if !ok || len(inputRaw) != 1 {
+		t.Fatalf("turn input = %#v, want single text input", params["input"])
+	}
+	inputItem, ok := inputRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("turn input[0] = %#v, want object", inputRaw[0])
+	}
+	if inputItem["type"] != "text" {
+		t.Fatalf("turn input[0].type = %#v, want text", inputItem["type"])
+	}
+	if inputItem["text"] != expectedPrompt {
+		t.Fatalf("turn input[0].text = %#v, want %q", inputItem["text"], expectedPrompt)
+	}
+	textElements, ok := inputItem["text_elements"].([]any)
+	if !ok {
+		t.Fatalf("turn input[0].text_elements = %#v, want []", inputItem["text_elements"])
+	}
+	if len(textElements) != 0 {
+		t.Fatalf("turn input[0].text_elements len = %d, want 0", len(textElements))
 	}
 }
 
