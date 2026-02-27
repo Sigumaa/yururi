@@ -552,6 +552,7 @@ func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string)
 		"これは自律観察モードです。",
 		"指定チャンネルを観察し、返信するほどではないが共有価値のある所感は times チャンネルへ send_message で短く投稿してください。",
 		"返信・times投稿を含むすべての出力で SOUL.md のキャラクター・語り口を維持してください。",
+		"times投稿は作業報告ではなく、ゆるり個人の気持ちや考えのメモとして書いてください。",
 		"ownerの最近のX投稿確認には twilog-mcp が利用可能なら優先してください。",
 	}
 	if strings.TrimSpace(timesChannelID) != "" {
@@ -599,22 +600,21 @@ func postMessageWhisper(ctx context.Context, cfg config.Config, sender heartbeat
 }
 
 func buildHeartbeatWhisperMessage(result codex.TurnResult) (string, bool) {
+	if hasDeliveryToolCall(result.ToolCalls) {
+		return "", false
+	}
 	action, summary, hasDecision := heartbeatDecisionSummary(result.AssistantText)
-	errMsg := strings.TrimSpace(result.ErrorMessage)
 	if hasDecision {
-		if action == "noop" && strings.TrimSpace(summary) == "" && errMsg == "" && len(result.ToolCalls) == 0 {
+		if action == "noop" && strings.TrimSpace(summary) == "" && strings.TrimSpace(result.ErrorMessage) == "" && len(result.ToolCalls) == 0 {
 			return "", false
 		}
 		if strings.TrimSpace(summary) != "" {
-			return trimLogString(summary, 280), true
+			return pickThoughtWhisperText(summary)
 		}
 	}
 	text := strings.TrimSpace(result.AssistantText)
 	if text != "" && !hasDecision {
-		return trimLogString(text, 280), true
-	}
-	if errMsg != "" {
-		return trimLogString(errMsg, 280), true
+		return pickThoughtWhisperText(text)
 	}
 	return "", false
 }
@@ -659,20 +659,69 @@ func buildMessageWhisperMessage(result codex.TurnResult) (string, bool) {
 	} else {
 		text = strings.TrimSpace(result.AssistantText)
 	}
-	text = trimLogString(text, 280)
 	if text == "" && errMsg == "" {
 		return "", false
 	}
 	if text != "" {
-		return text, true
+		return pickThoughtWhisperText(text)
 	}
-	return trimLogString(errMsg, 280), true
+	return "", false
 }
 
 func hasDeliveryToolCall(toolCalls []codex.MCPToolCall) bool {
 	for _, call := range toolCalls {
 		tool := strings.ToLower(strings.TrimSpace(call.Tool))
 		if tool == "send_message" || tool == "reply_message" {
+			return true
+		}
+	}
+	return false
+}
+
+func pickThoughtWhisperText(text string) (string, bool) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "", false
+	}
+	candidates := splitWhisperCandidates(trimmed)
+	for _, candidate := range candidates {
+		line := trimLogString(candidate, 280)
+		if line == "" {
+			continue
+		}
+		if isOperationalWhisperLine(line) {
+			continue
+		}
+		return line, true
+	}
+	return "", false
+}
+
+func splitWhisperCandidates(text string) []string {
+	parts := strings.FieldsFunc(text, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '。' || r == '!' || r == '！' || r == '?' || r == '？'
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func isOperationalWhisperLine(line string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(line))
+	if lowered == "" {
+		return true
+	}
+	for _, token := range []string{
+		"確認", "実施", "終了", "投稿", "対応", "実行", "整理", "読込", "読み込み", "投下", "完了", "作業",
+		"confirmed", "completed", "finished", "executed", "done",
+	} {
+		if strings.Contains(lowered, strings.ToLower(token)) {
 			return true
 		}
 	}

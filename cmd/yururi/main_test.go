@@ -82,7 +82,7 @@ func TestRunHeartbeatTurnPostsTimesWhisperWhenWorkExists(t *testing.T) {
 	runtime := &heartbeatRuntimeStub{
 		result: codex.TurnResult{
 			Status:        "completed",
-			AssistantText: "HEARTBEAT.md の内容を確認しました。今回は追加で対応することはありません。",
+			AssistantText: "今日は話題の流れがつながってて、ちょっとわくわくした。",
 		},
 	}
 	sender := &heartbeatWhisperSenderStub{}
@@ -96,7 +96,7 @@ func TestRunHeartbeatTurnPostsTimesWhisperWhenWorkExists(t *testing.T) {
 	if sender.messages[0].channelID != "times" {
 		t.Fatalf("times whisper channel = %q, want times", sender.messages[0].channelID)
 	}
-	if !strings.Contains(sender.messages[0].content, "HEARTBEAT.md の内容を確認しました") {
+	if !strings.Contains(sender.messages[0].content, "わくわく") {
 		t.Fatalf("times whisper content missing summary: %q", sender.messages[0].content)
 	}
 }
@@ -199,7 +199,7 @@ func TestBuildMessageWhisperMessage(t *testing.T) {
 				},
 			},
 			wantOK:  true,
-			wantHas: "👀でリアクションしておいたよ。",
+			wantHas: "👀でリアクションしておいたよ",
 		},
 		{
 			name: "skip noop decision",
@@ -213,8 +213,14 @@ func TestBuildMessageWhisperMessage(t *testing.T) {
 			result: codex.TurnResult{
 				ErrorMessage: "network error",
 			},
-			wantOK:  true,
-			wantHas: "network error",
+			wantOK: false,
+		},
+		{
+			name: "skip operational report",
+			result: codex.TurnResult{
+				AssistantText: "HEARTBEAT.md の内容を確認しました。必要な作業を実施しました。",
+			},
+			wantOK: false,
 		},
 	}
 
@@ -275,6 +281,17 @@ func TestTrimLogAny(t *testing.T) {
 	}
 	if got := trimLogAny(math.NaN(), 20); got != "NaN" {
 		t.Fatalf("trimLogAny(NaN, 20) = %q, want %q", got, "NaN")
+	}
+}
+
+func TestPickThoughtWhisperText(t *testing.T) {
+	t.Parallel()
+
+	if got, ok := pickThoughtWhisperText("確認しました。実施しました。"); ok || got != "" {
+		t.Fatalf("pickThoughtWhisperText(operational) = (%q, %v), want empty/false", got, ok)
+	}
+	if got, ok := pickThoughtWhisperText("確認しました。今日は流れがつながっておもしろい。"); !ok || !strings.Contains(got, "おもしろい") {
+		t.Fatalf("pickThoughtWhisperText(mixed) = (%q, %v), want thought line", got, ok)
 	}
 }
 
