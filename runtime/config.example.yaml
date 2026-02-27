@@ -22,8 +22,7 @@ codex:
     twilog-mcp:
       command: "npx"
       args: ["mcp-remote", "https://twilog-mcp.togetter.dev/mcp"]
-      headers:
-        Authorization: "Bearer ${CODEX_MCP_TWILOG_BEARER_TOKEN}"
+      bearer_token: "YOUR_TWILOG_BEARER_TOKEN"
 mcp:
   bind: "127.0.0.1:39393"
   url: "http://127.0.0.1:39393/mcp"

@@ -51,7 +51,7 @@ Discord向け自律エージェント「ゆるり」。
 
 `mcp.tool_policy.*` は `*` ワイルドカード対応、大小文字を区別しない。
 `x_search` を使う場合は `xai.enabled=true` と `xai.api_key` を設定する。
-`twilog-mcp` を使う場合は `codex.mcp_servers.twilog-mcp` を設定し、必要なら `CODEX_MCP_TWILOG_BEARER_TOKEN` を設定する。
+`twilog-mcp` を使う場合は `codex.mcp_servers.twilog-mcp.bearer_token` を設定できる。`CODEX_MCP_TWILOG_BEARER_TOKEN` も引き続き使え、設定時は環境変数を優先する。
 `discord.observe_category_ids[]` を設定した場合は、カテゴリ配下のテキストチャンネルを起動時に観察対象へ追加する。
 ログ色付けはTTY接続時に自動有効。`NO_COLOR` で無効化、`YURURI_LOG_COLOR=true/false` で強制できる。
 

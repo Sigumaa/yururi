@@ -922,9 +922,10 @@ func copyMCPServers(src map[string]config.CodexMCPServerConfig) map[string]confi
 	dst := make(map[string]config.CodexMCPServerConfig, len(src))
 	for name, server := range src {
 		cloned := config.CodexMCPServerConfig{
-			URL:     strings.TrimSpace(server.URL),
-			Command: strings.TrimSpace(server.Command),
-			Args:    append([]string(nil), server.Args...),
+			URL:         strings.TrimSpace(server.URL),
+			Command:     strings.TrimSpace(server.Command),
+			Args:        append([]string(nil), server.Args...),
+			BearerToken: strings.TrimSpace(server.BearerToken),
 		}
 		if len(server.Headers) > 0 {
 			cloned.Headers = make(map[string]string, len(server.Headers))

@@ -66,10 +66,11 @@ type CodexConfig struct {
 }
 
 type CodexMCPServerConfig struct {
-	URL     string            `yaml:"url"`
-	Command string            `yaml:"command"`
-	Args    []string          `yaml:"args"`
-	Headers map[string]string `yaml:"headers"`
+	URL         string            `yaml:"url"`
+	Command     string            `yaml:"command"`
+	Args        []string          `yaml:"args"`
+	Headers     map[string]string `yaml:"headers"`
+	BearerToken string            `yaml:"bearer_token"`
 }
 
 type MCPConfig struct {
@@ -221,9 +222,10 @@ func (c *Config) normalize() {
 	}
 	for name, server := range c.Codex.MCPServers {
 		normalized := CodexMCPServerConfig{
-			URL:     strings.TrimSpace(server.URL),
-			Command: strings.TrimSpace(server.Command),
-			Args:    cleanList(server.Args),
+			URL:         strings.TrimSpace(server.URL),
+			Command:     strings.TrimSpace(server.Command),
+			Args:        cleanList(server.Args),
+			BearerToken: strings.TrimSpace(server.BearerToken),
 		}
 		if len(server.Headers) > 0 {
 			normalized.Headers = make(map[string]string, len(server.Headers))
@@ -234,6 +236,14 @@ func (c *Config) normalize() {
 					continue
 				}
 				normalized.Headers[key] = val
+			}
+		}
+		if normalized.BearerToken != "" {
+			if normalized.Headers == nil {
+				normalized.Headers = map[string]string{}
+			}
+			if _, exists := normalized.Headers["Authorization"]; !exists {
+				normalized.Headers["Authorization"] = "Bearer " + normalized.BearerToken
 			}
 		}
 		c.Codex.MCPServers[name] = normalized
