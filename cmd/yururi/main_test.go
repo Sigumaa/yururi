@@ -10,6 +10,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/sigumaa/yururi/internal/codex"
 	"github.com/sigumaa/yururi/internal/config"
+	"github.com/sigumaa/yururi/internal/discordx"
 	"github.com/sigumaa/yururi/internal/prompt"
 )
 
@@ -161,6 +162,40 @@ func TestRunHeartbeatTurnTimesWhisperRespectsMinInterval(t *testing.T) {
 	}
 	if len(sender.messages) != 1 {
 		t.Fatalf("times whisper count = %d, want 1", len(sender.messages))
+	}
+}
+
+func TestBuildAutonomyPromptDoesNotIncludeHeartbeatPrompt(t *testing.T) {
+	t.Parallel()
+
+	got := buildAutonomyPrompt(nil, "")
+	if !strings.Contains(got, prompt.AutonomySystemPrompt) {
+		t.Fatalf("autonomy prompt missing autonomy system prompt: %q", got)
+	}
+	if strings.Contains(got, prompt.HeartbeatSystemPrompt) {
+		t.Fatalf("autonomy prompt should not include heartbeat prompt: %q", got)
+	}
+	if strings.Contains(strings.ToLower(got), "heartbeat.md") {
+		t.Fatalf("autonomy prompt should not mention heartbeat.md: %q", got)
+	}
+}
+
+func TestBuildAutonomyPromptIncludesObservedChannelsAndTimes(t *testing.T) {
+	t.Parallel()
+
+	channels := []discordx.ChannelInfo{
+		{ChannelID: "111", Name: "times-yururi"},
+		{ChannelID: "222", Name: "times-web"},
+	}
+	got := buildAutonomyPrompt(channels, "999")
+	if !strings.Contains(got, "times_channel_id=999") {
+		t.Fatalf("autonomy prompt missing times channel id: %q", got)
+	}
+	if !strings.Contains(got, "- times-yururi (111)") {
+		t.Fatalf("autonomy prompt missing first channel: %q", got)
+	}
+	if !strings.Contains(got, "- times-web (222)") {
+		t.Fatalf("autonomy prompt missing second channel: %q", got)
 	}
 }
 

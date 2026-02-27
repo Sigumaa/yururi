@@ -547,9 +547,7 @@ func postHeartbeatWhisper(ctx context.Context, cfg config.Config, sender heartbe
 
 func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string) string {
 	lines := []string{
-		prompt.HeartbeatSystemPrompt,
-		"",
-		"これは自律観察モードです。",
+		prompt.AutonomySystemPrompt,
 		"指定チャンネルを観察し、返信するほどではないが共有価値のある内容は times チャンネルへ send_message で共有してよいです。",
 		"返信・times投稿を含むすべての出力で SOUL.md のキャラクター・語り口を維持してください。",
 		"times投稿は形式を固定しません。何を言うかは SOUL.md のペルソナに沿って自由に決めてください。",
