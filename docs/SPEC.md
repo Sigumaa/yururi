@@ -18,6 +18,7 @@
 1. `config.yaml`公開キー:
    - `discord.guild_id`
    - `discord.target_channel_ids[]`
+   - `discord.observe_channel_ids[]`
    - `discord.excluded_channel_ids[]`
    - `discord.allowed_bot_user_ids[]`
    - `persona.owner_user_id`
@@ -27,8 +28,12 @@
    - `codex.args`（既定: `["--search","app-server","--listen","stdio://"]`）
    - `codex.workspace_dir`
    - `codex.home_dir`
+   - `codex.mcp_servers.*`
    - `heartbeat.cron`（既定30分）
    - `heartbeat.timezone`
+   - `autonomy.enabled`
+   - `autonomy.cron`
+   - `autonomy.timezone`
    - `xai.enabled`
    - `xai.api_key`
    - `xai.base_url`（既定: `https://api.x.ai/v1`）
@@ -64,6 +69,7 @@
 2. Utility tools:
    - `get_current_time(timezone?)`（未指定時`Asia/Tokyo`）
    - `x_search(query, allowed_x_handles?, excluded_x_handles?, from_date?, to_date?, enable_image_understanding?, enable_video_understanding?)`
+   - `twilog-mcp`（設定済みの場合、ownerのX投稿確認に利用）
 3. Workspace doc tools:
    - `read_workspace_doc`
    - `append_workspace_doc`
@@ -95,7 +101,9 @@
 8. typing停止・メタログ出力。
 9. heartbeat時は`HEARTBEAT.md`の指示に従って必要時のみ行動する。
 10. heartbeat実行ログには`assistant_text`、decision要約（parse可否含む）、tool call詳細（server/tool/status/arguments/result）を出力する。
-11. `persona.times_channel_id`が設定されている場合、heartbeatで実作業（tool実行・非noop判断・エラー）が発生したときのみ短い自律つぶやきを投稿する。投稿間隔は`persona.times_min_interval_sec`で抑制する。
+11. `persona.times_channel_id`が設定されている場合、heartbeatと通常メッセージ処理の両方で、返信するほどではないが共有価値がある所感や実行結果を短く自律つぶやき投稿してよい。投稿間隔は`persona.times_min_interval_sec`で抑制する。
+12. `discord.observe_channel_ids[]` は読み取り専用チャンネルとし、観察・調査対象に含めてよいが直接投稿はしない。
+13. `autonomy.enabled`がtrueの場合、通常heartbeatとは別に自律観察ループを実行し、観察可能チャンネルやtwilog-mcpを使った調査を行ってよい。
 
 ## 制約と運用ルール
 1. 指定チャンネル外では動作しない。
