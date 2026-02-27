@@ -45,18 +45,6 @@ type MessageInput struct {
 	Recent      []RuntimeMessage
 }
 
-type HeartbeatInput struct {
-	DueTasks []HeartbeatTask
-}
-
-type HeartbeatTask struct {
-	TaskID       string
-	Title        string
-	Instructions string
-	ChannelID    string
-	Schedule     string
-}
-
 type WorkspaceInstructions struct {
 	Dir     string
 	Content map[string]string
@@ -162,32 +150,11 @@ func BuildMessageBundle(instructions WorkspaceInstructions, input MessageInput) 
 	}
 }
 
-func BuildHeartbeatBundle(instructions WorkspaceInstructions, input HeartbeatInput) Bundle {
-	taskLines := []string{"(none)"}
-	if len(input.DueTasks) > 0 {
-		taskLines = make([]string, 0, len(input.DueTasks))
-		for _, task := range input.DueTasks {
-			line := fmt.Sprintf("- task_id=%s channel_id=%s title=%s schedule=%s instructions=%s",
-				task.TaskID,
-				valueOrFallback(task.ChannelID, "(unset)"),
-				valueOrFallback(task.Title, "(untitled)"),
-				valueOrFallback(task.Schedule, "(none)"),
-				strings.TrimSpace(task.Instructions),
-			)
-			taskLines = append(taskLines, line)
-		}
-	}
-	prompt := strings.Join([]string{
-		HeartbeatSystemPrompt,
-		"",
-		"## due tasks",
-		strings.Join(taskLines, "\n"),
-	}, "\n")
-
+func BuildHeartbeatBundle(instructions WorkspaceInstructions) Bundle {
 	return Bundle{
 		BaseInstructions:      buildBaseInstructions(instructions),
 		DeveloperInstructions: buildDeveloperInstructions(),
-		UserPrompt:            prompt,
+		UserPrompt:            HeartbeatSystemPrompt,
 	}
 }
 

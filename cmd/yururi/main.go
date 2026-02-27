@@ -222,7 +222,7 @@ func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatR
 	if err != nil {
 		return err
 	}
-	bundle := prompt.BuildHeartbeatBundle(instructions, prompt.HeartbeatInput{})
+	bundle := prompt.BuildHeartbeatBundle(instructions)
 	result, err := runtime.RunTurn(ctx, codex.TurnInput{
 		BaseInstructions:      bundle.BaseInstructions,
 		DeveloperInstructions: bundle.DeveloperInstructions,

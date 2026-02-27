@@ -83,19 +83,11 @@ func TestBuildMessageBundle(t *testing.T) {
 func TestBuildHeartbeatBundle(t *testing.T) {
 	t.Parallel()
 
-	bundle := BuildHeartbeatBundle(WorkspaceInstructions{}, HeartbeatInput{
-		DueTasks: []HeartbeatTask{{
-			TaskID:       "daily-news",
-			ChannelID:    "c1",
-			Title:        "daily summary",
-			Schedule:     "daily",
-			Instructions: "ニュースを要約して送る",
-		}},
-	})
-	if !strings.Contains(bundle.UserPrompt, "due tasks") {
-		t.Fatalf("heartbeat prompt missing due tasks section: %q", bundle.UserPrompt)
+	bundle := BuildHeartbeatBundle(WorkspaceInstructions{})
+	if !strings.Contains(bundle.UserPrompt, HeartbeatSystemPrompt) {
+		t.Fatalf("heartbeat prompt missing heartbeat system prompt: %q", bundle.UserPrompt)
 	}
-	if !strings.Contains(bundle.UserPrompt, "daily-news") {
-		t.Fatalf("heartbeat prompt missing task id: %q", bundle.UserPrompt)
+	if strings.Contains(strings.ToLower(bundle.UserPrompt), "due tasks") {
+		t.Fatalf("heartbeat prompt should not include due tasks section: %q", bundle.UserPrompt)
 	}
 }

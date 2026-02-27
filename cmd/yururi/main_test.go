@@ -56,8 +56,11 @@ func TestRunHeartbeatTurnCallsRuntime(t *testing.T) {
 	if got := len(runtime.calls); got != 1 {
 		t.Fatalf("runtime RunTurn calls = %d, want 1", got)
 	}
-	if !strings.Contains(runtime.calls[0].UserPrompt, "## due tasks") {
-		t.Fatalf("heartbeat prompt missing due tasks section: %q", runtime.calls[0].UserPrompt)
+	if !strings.Contains(runtime.calls[0].UserPrompt, prompt.HeartbeatSystemPrompt) {
+		t.Fatalf("heartbeat prompt missing system prompt: %q", runtime.calls[0].UserPrompt)
+	}
+	if strings.Contains(strings.ToLower(runtime.calls[0].UserPrompt), "due tasks") {
+		t.Fatalf("heartbeat prompt should not include due tasks section: %q", runtime.calls[0].UserPrompt)
 	}
 }
 
