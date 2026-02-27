@@ -114,6 +114,22 @@ func (c *Coordinator) Session(channelKey string) (SessionState, bool) {
 	return c.session(key)
 }
 
+func (c *Coordinator) ResetSession(channelKey string) bool {
+	key := strings.TrimSpace(channelKey)
+	if key == "" {
+		return false
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, ok := c.sessions[key]; !ok {
+		return false
+	}
+	delete(c.sessions, key)
+	return true
+}
+
 func ChannelKey(guildID string, channelID string) string {
 	guildID = strings.TrimSpace(guildID)
 	channelID = strings.TrimSpace(channelID)

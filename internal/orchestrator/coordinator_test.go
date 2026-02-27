@@ -218,6 +218,53 @@ func TestCoordinatorSteerFallbackCreatesNewThreadWhenNeeded(t *testing.T) {
 	}
 }
 
+func TestCoordinatorResetSessionWithEmptyKeyReturnsFalse(t *testing.T) {
+	t.Parallel()
+
+	coordinator := New(nil)
+	if got := coordinator.ResetSession("   "); got {
+		t.Fatalf("ResetSession() = %v, want false", got)
+	}
+}
+
+func TestCoordinatorResetSessionDeletesExistingSession(t *testing.T) {
+	t.Parallel()
+
+	stub := &runtimeStub{
+		startThreadResults: []threadResult{
+			{threadID: "thread-1"},
+		},
+		startTurnResults: []turnResult{
+			{result: codex.TurnResult{TurnID: "turn-1", Status: "completed"}},
+		},
+	}
+	coordinator := New(stub)
+
+	if _, err := coordinator.RunMessageTurn(context.Background(), "g1:c1", codex.TurnInput{
+		BaseInstructions:      "base",
+		DeveloperInstructions: "dev",
+		UserPrompt:            "first",
+	}); err != nil {
+		t.Fatalf("RunMessageTurn() error = %v", err)
+	}
+
+	if got := coordinator.ResetSession("g1:c1"); !got {
+		t.Fatalf("ResetSession() = %v, want true", got)
+	}
+	if _, ok := coordinator.Session("g1:c1"); ok {
+		t.Fatal("session should be removed")
+	}
+}
+
+func TestCoordinatorResetSessionWithMissingKeyReturnsFalse(t *testing.T) {
+	t.Parallel()
+
+	coordinator := New(nil)
+	if got := coordinator.ResetSession("g1:c1"); got {
+		t.Fatalf("ResetSession() = %v, want false", got)
+	}
+}
+
 type runtimeStub struct {
 	startThreadResults []threadResult
 	startTurnResults   []turnResult

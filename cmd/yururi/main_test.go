@@ -108,6 +108,75 @@ func TestTrimLogAny(t *testing.T) {
 	}
 }
 
+func TestShouldResetSessionAfterMemoryUpdate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		toolCalls []codex.MCPToolCall
+		want      bool
+	}{
+		{
+			name: "append memory doc",
+			toolCalls: []codex.MCPToolCall{{
+				Tool:      "append_workspace_doc",
+				Arguments: map[string]any{"name": "  MEMORY.md  "},
+			}},
+			want: true,
+		},
+		{
+			name: "replace memory doc with case difference",
+			toolCalls: []codex.MCPToolCall{{
+				Tool:      "replace_workspace_doc",
+				Arguments: map[string]any{"name": " memory.MD "},
+			}},
+			want: true,
+		},
+		{
+			name: "name mismatch",
+			toolCalls: []codex.MCPToolCall{{
+				Tool:      "append_workspace_doc",
+				Arguments: map[string]any{"name": "SOUL.md"},
+			}},
+			want: false,
+		},
+		{
+			name: "tool mismatch",
+			toolCalls: []codex.MCPToolCall{{
+				Tool:      "read_workspace_doc",
+				Arguments: map[string]any{"name": "MEMORY.md"},
+			}},
+			want: false,
+		},
+		{
+			name: "json string arguments",
+			toolCalls: []codex.MCPToolCall{{
+				Tool:      "append_workspace_doc",
+				Arguments: `{"name":"memory.md"}`,
+			}},
+			want: true,
+		},
+		{
+			name: "missing arguments name",
+			toolCalls: []codex.MCPToolCall{{
+				Tool:      "append_workspace_doc",
+				Arguments: map[string]any{"content": "updated"},
+			}},
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := shouldResetSessionAfterMemoryUpdate(tc.toolCalls); got != tc.want {
+				t.Fatalf("shouldResetSessionAfterMemoryUpdate() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 type heartbeatRuntimeStub struct {
 	calls []codex.TurnInput
 }
