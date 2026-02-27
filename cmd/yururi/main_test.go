@@ -50,7 +50,7 @@ func TestRunHeartbeatTurnCallsRuntime(t *testing.T) {
 	}
 	runtime := &heartbeatRuntimeStub{}
 
-	if err := runHeartbeatTurn(context.Background(), cfg, runtime, "hb-test"); err != nil {
+	if err := runHeartbeatTurn(context.Background(), cfg, runtime, nil, nil, "hb-test"); err != nil {
 		t.Fatalf("runHeartbeatTurn() error = %v", err)
 	}
 	if got := len(runtime.calls); got != 1 {
@@ -61,6 +61,108 @@ func TestRunHeartbeatTurnCallsRuntime(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(runtime.calls[0].UserPrompt), "due tasks") {
 		t.Fatalf("heartbeat prompt should not include due tasks section: %q", runtime.calls[0].UserPrompt)
+	}
+}
+
+func TestRunHeartbeatTurnPostsTimesWhisperWhenWorkExists(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	if err := prompt.EnsureWorkspaceInstructionFiles(workspaceDir); err != nil {
+		t.Fatalf("EnsureWorkspaceInstructionFiles() error = %v", err)
+	}
+	cfg := config.Config{
+		Codex: config.CodexConfig{WorkspaceDir: workspaceDir},
+		Persona: config.PersonaConfig{
+			TimesChannelID: "times",
+		},
+	}
+	runtime := &heartbeatRuntimeStub{
+		result: codex.TurnResult{
+			Status: "completed",
+			ToolCalls: []codex.MCPToolCall{
+				{Tool: "read_workspace_doc", Status: "completed"},
+			},
+		},
+	}
+	sender := &heartbeatWhisperSenderStub{}
+
+	if err := runHeartbeatTurn(context.Background(), cfg, runtime, sender, &timesWhisperState{}, "hb-whisper"); err != nil {
+		t.Fatalf("runHeartbeatTurn() error = %v", err)
+	}
+	if len(sender.messages) != 1 {
+		t.Fatalf("times whisper count = %d, want 1", len(sender.messages))
+	}
+	if sender.messages[0].channelID != "times" {
+		t.Fatalf("times whisper channel = %q, want times", sender.messages[0].channelID)
+	}
+	if !strings.Contains(sender.messages[0].content, "定期チェック") {
+		t.Fatalf("times whisper content missing summary: %q", sender.messages[0].content)
+	}
+}
+
+func TestRunHeartbeatTurnSuppressesTimesWhisperForNoop(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	if err := prompt.EnsureWorkspaceInstructionFiles(workspaceDir); err != nil {
+		t.Fatalf("EnsureWorkspaceInstructionFiles() error = %v", err)
+	}
+	cfg := config.Config{
+		Codex: config.CodexConfig{WorkspaceDir: workspaceDir},
+		Persona: config.PersonaConfig{
+			TimesChannelID: "times",
+		},
+	}
+	runtime := &heartbeatRuntimeStub{
+		result: codex.TurnResult{
+			Status:        "completed",
+			AssistantText: `{"action":"noop"}`,
+		},
+	}
+	sender := &heartbeatWhisperSenderStub{}
+
+	if err := runHeartbeatTurn(context.Background(), cfg, runtime, sender, &timesWhisperState{}, "hb-noop"); err != nil {
+		t.Fatalf("runHeartbeatTurn() error = %v", err)
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("times whisper count = %d, want 0", len(sender.messages))
+	}
+}
+
+func TestRunHeartbeatTurnTimesWhisperRespectsMinInterval(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	if err := prompt.EnsureWorkspaceInstructionFiles(workspaceDir); err != nil {
+		t.Fatalf("EnsureWorkspaceInstructionFiles() error = %v", err)
+	}
+	cfg := config.Config{
+		Codex: config.CodexConfig{WorkspaceDir: workspaceDir},
+		Persona: config.PersonaConfig{
+			TimesChannelID:    "times",
+			TimesMinIntervalS: 300,
+		},
+	}
+	runtime := &heartbeatRuntimeStub{
+		result: codex.TurnResult{
+			Status: "completed",
+			ToolCalls: []codex.MCPToolCall{
+				{Tool: "read_workspace_doc", Status: "completed"},
+			},
+		},
+	}
+	sender := &heartbeatWhisperSenderStub{}
+	state := &timesWhisperState{}
+
+	if err := runHeartbeatTurn(context.Background(), cfg, runtime, sender, state, "hb-1"); err != nil {
+		t.Fatalf("runHeartbeatTurn() first error = %v", err)
+	}
+	if err := runHeartbeatTurn(context.Background(), cfg, runtime, sender, state, "hb-2"); err != nil {
+		t.Fatalf("runHeartbeatTurn() second error = %v", err)
+	}
+	if len(sender.messages) != 1 {
+		t.Fatalf("times whisper count = %d, want 1", len(sender.messages))
 	}
 }
 
@@ -178,14 +280,39 @@ func TestShouldResetSessionAfterMemoryUpdate(t *testing.T) {
 }
 
 type heartbeatRuntimeStub struct {
-	calls []codex.TurnInput
+	calls  []codex.TurnInput
+	result codex.TurnResult
+	err    error
 }
 
 func (s *heartbeatRuntimeStub) RunTurn(_ context.Context, input codex.TurnInput) (codex.TurnResult, error) {
 	s.calls = append(s.calls, input)
-	return codex.TurnResult{
-		ThreadID: "thread-test",
-		TurnID:   "turn-test",
-		Status:   "completed",
-	}, nil
+	if s.err != nil {
+		return codex.TurnResult{}, s.err
+	}
+	if strings.TrimSpace(s.result.Status) == "" && strings.TrimSpace(s.result.ThreadID) == "" && strings.TrimSpace(s.result.TurnID) == "" && len(s.result.ToolCalls) == 0 && strings.TrimSpace(s.result.AssistantText) == "" && strings.TrimSpace(s.result.ErrorMessage) == "" {
+		return codex.TurnResult{
+			ThreadID: "thread-test",
+			TurnID:   "turn-test",
+			Status:   "completed",
+		}, nil
+	}
+	return s.result, nil
+}
+
+type heartbeatWhisperSenderStub struct {
+	messages []whisperMessage
+}
+
+type whisperMessage struct {
+	channelID string
+	content   string
+}
+
+func (s *heartbeatWhisperSenderStub) SendMessage(_ context.Context, channelID string, content string) (string, error) {
+	s.messages = append(s.messages, whisperMessage{
+		channelID: channelID,
+		content:   content,
+	})
+	return "m1", nil
 }

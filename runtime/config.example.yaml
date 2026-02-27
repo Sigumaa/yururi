@@ -7,6 +7,8 @@ discord:
   allowed_bot_user_ids: []
 persona:
   owner_user_id: "OWNER_USER_ID"
+  times_channel_id: ""
+  times_min_interval_sec: 300
 codex:
   command: "codex"
   args: ["--search", "app-server", "--listen", "stdio://"]

@@ -56,6 +56,12 @@ codex:
 	if cfg.XAI.TimeoutSec != 30 {
 		t.Fatalf("XAI.TimeoutSec = %d", cfg.XAI.TimeoutSec)
 	}
+	if cfg.Persona.TimesChannelID != "" {
+		t.Fatalf("Persona.TimesChannelID = %q, want empty", cfg.Persona.TimesChannelID)
+	}
+	if cfg.Persona.TimesMinIntervalS != 0 {
+		t.Fatalf("Persona.TimesMinIntervalS = %d, want 0", cfg.Persona.TimesMinIntervalS)
+	}
 }
 
 func TestLoadAppliesEnvOverrides(t *testing.T) {
@@ -89,6 +95,8 @@ mcp:
 	t.Setenv("XAI_BASE_URL", "https://api.x.ai/v1/")
 	t.Setenv("XAI_MODEL", "grok-4-1-fast-non-reasoning")
 	t.Setenv("XAI_TIMEOUT_SEC", "45")
+	t.Setenv("PERSONA_TIMES_CHANNEL_ID", "times-channel")
+	t.Setenv("PERSONA_TIMES_MIN_INTERVAL_SEC", "120")
 
 	cfg, err := Load(cfgPath)
 	if err != nil {
@@ -123,6 +131,12 @@ mcp:
 	}
 	if cfg.XAI.TimeoutSec != 45 {
 		t.Fatalf("XAI.TimeoutSec = %d", cfg.XAI.TimeoutSec)
+	}
+	if cfg.Persona.TimesChannelID != "times-channel" {
+		t.Fatalf("Persona.TimesChannelID = %q, want times-channel", cfg.Persona.TimesChannelID)
+	}
+	if cfg.Persona.TimesMinIntervalS != 120 {
+		t.Fatalf("Persona.TimesMinIntervalS = %d, want 120", cfg.Persona.TimesMinIntervalS)
 	}
 
 	current := CurrentMCPToolPolicy()

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os/signal"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -28,6 +29,15 @@ import (
 
 type heartbeatRuntime interface {
 	RunTurn(ctx context.Context, input codex.TurnInput) (codex.TurnResult, error)
+}
+
+type heartbeatWhisperSender interface {
+	SendMessage(ctx context.Context, channelID string, content string) (string, error)
+}
+
+type timesWhisperState struct {
+	mu     sync.Mutex
+	lastAt time.Time
 }
 
 const maxHeartbeatLogValueLen = 280
@@ -75,6 +85,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	var runSeq atomic.Uint64
+	whisperState := &timesWhisperState{}
 
 	dispatcher := dispatch.New(ctx, 128, 1200*time.Millisecond, func(m *discordgo.MessageCreate, meta dispatch.CallbackMetadata) {
 		if meta.MergedCount > 1 {
@@ -105,7 +116,7 @@ func main() {
 
 	if cfg.Heartbeat.Enabled {
 		runner, err := heartbeat.NewRunner(cfg.Heartbeat.Cron, cfg.Heartbeat.Timezone, func(runCtx context.Context) error {
-			return runHeartbeatTurn(runCtx, cfg, aiClient, nextRunID(&runSeq, "hb"))
+			return runHeartbeatTurn(runCtx, cfg, aiClient, gateway, whisperState, nextRunID(&runSeq, "hb"))
 		})
 		if err != nil {
 			log.Fatalf("init heartbeat runner: %v", err)
@@ -219,7 +230,7 @@ func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orch
 	}
 }
 
-func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatRuntime, runID string) error {
+func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatRuntime, sender heartbeatWhisperSender, whisperState *timesWhisperState, runID string) error {
 	started := time.Now()
 	log.Printf("event=heartbeat_tick run_id=%s", runID)
 
@@ -272,6 +283,9 @@ func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatR
 	}
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=heartbeat_turn_error_detail run_id=%s err=%s", runID, result.ErrorMessage)
+	}
+	if err := postHeartbeatWhisper(ctx, cfg, sender, whisperState, runID, result); err != nil {
+		log.Printf("event=heartbeat_times_post_failed run_id=%s err=%v", runID, err)
 	}
 	return nil
 }
@@ -453,4 +467,122 @@ func workspaceDocNameFromArguments(arguments any) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func postHeartbeatWhisper(ctx context.Context, cfg config.Config, sender heartbeatWhisperSender, whisperState *timesWhisperState, runID string, result codex.TurnResult) error {
+	channelID := strings.TrimSpace(cfg.Persona.TimesChannelID)
+	if channelID == "" || sender == nil {
+		return nil
+	}
+	content, ok := buildHeartbeatWhisperMessage(runID, result)
+	if !ok {
+		return nil
+	}
+	minInterval := time.Duration(cfg.Persona.TimesMinIntervalS) * time.Second
+	if whisperState != nil && !whisperState.shouldSend(time.Now().UTC(), minInterval) {
+		log.Printf("event=heartbeat_times_suppressed run_id=%s channel=%s reason=min_interval", runID, channelID)
+		return nil
+	}
+	if _, err := sender.SendMessage(ctx, channelID, content); err != nil {
+		return err
+	}
+	if whisperState != nil {
+		whisperState.markSent(time.Now().UTC())
+	}
+	log.Printf("event=heartbeat_times_posted run_id=%s channel=%s", runID, channelID)
+	return nil
+}
+
+func buildHeartbeatWhisperMessage(runID string, result codex.TurnResult) (string, bool) {
+	action, summary, hasDecision := heartbeatDecisionSummary(result.AssistantText)
+	errMsg := strings.TrimSpace(result.ErrorMessage)
+	shouldPost := errMsg != "" || len(result.ToolCalls) > 0 || (hasDecision && action != "noop")
+	if !shouldPost {
+		return "", false
+	}
+
+	lines := []string{
+		"ゆるりのつぶやき: 定期チェック",
+		fmt.Sprintf("run=%s status=%s", runID, fallbackForLog(result.Status, "unknown")),
+	}
+	if hasDecision {
+		lines = append(lines, fmt.Sprintf("判断=%s", action))
+		if action != "noop" && strings.TrimSpace(summary) != "" {
+			lines = append(lines, "要点="+trimLogString(summary, 140))
+		}
+	}
+	if len(result.ToolCalls) > 0 {
+		lines = append(lines, "実行="+summarizeToolCalls(result.ToolCalls, 4))
+	}
+	if errMsg != "" {
+		lines = append(lines, "エラー="+trimLogString(errMsg, 140))
+	}
+	return strings.Join(lines, "\n"), true
+}
+
+func heartbeatDecisionSummary(assistantText string) (action string, summary string, ok bool) {
+	text := strings.TrimSpace(assistantText)
+	if text == "" {
+		return "", "", false
+	}
+	decision, err := codex.ParseDecisionOutput(text)
+	if err != nil {
+		return "", "", false
+	}
+	return strings.TrimSpace(decision.Action), strings.TrimSpace(decision.Content), true
+}
+
+func summarizeToolCalls(toolCalls []codex.MCPToolCall, limit int) string {
+	if len(toolCalls) == 0 {
+		return "none"
+	}
+	if limit <= 0 {
+		limit = len(toolCalls)
+	}
+	parts := make([]string, 0, limit)
+	for i, call := range toolCalls {
+		if i >= limit {
+			parts = append(parts, fmt.Sprintf("...(+%d)", len(toolCalls)-limit))
+			break
+		}
+		name := strings.TrimSpace(call.Tool)
+		if name == "" {
+			name = "unknown_tool"
+		}
+		status := strings.TrimSpace(call.Status)
+		if status == "" {
+			status = "unknown"
+		}
+		parts = append(parts, name+"("+status+")")
+	}
+	return strings.Join(parts, ", ")
+}
+
+func fallbackForLog(value string, fallback string) string {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return fallback
+	}
+	return v
+}
+
+func (s *timesWhisperState) shouldSend(now time.Time, minInterval time.Duration) bool {
+	if s == nil || minInterval <= 0 {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastAt.IsZero() {
+		return true
+	}
+	return now.Sub(s.lastAt) >= minInterval
+}
+
+func (s *timesWhisperState) markSent(now time.Time) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.lastAt = now
+	s.mu.Unlock()
 }

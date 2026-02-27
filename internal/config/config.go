@@ -45,7 +45,9 @@ type DiscordConfig struct {
 }
 
 type PersonaConfig struct {
-	OwnerUserID string `yaml:"owner_user_id"`
+	OwnerUserID       string `yaml:"owner_user_id"`
+	TimesChannelID    string `yaml:"times_channel_id"`
+	TimesMinIntervalS int    `yaml:"times_min_interval_sec"`
 }
 
 type CodexConfig struct {
@@ -210,6 +212,9 @@ func (c *Config) normalize() {
 	}
 	c.MCP.ToolPolicy.AllowPatterns = cleanList(c.MCP.ToolPolicy.AllowPatterns)
 	c.MCP.ToolPolicy.DenyPatterns = cleanList(c.MCP.ToolPolicy.DenyPatterns)
+	if c.Persona.TimesMinIntervalS < 0 {
+		c.Persona.TimesMinIntervalS = 0
+	}
 }
 
 func applyEnvOverrides(cfg *Config) {
@@ -230,6 +235,7 @@ func applyEnvOverrides(cfg *Config) {
 	applyList("DISCORD_EXCLUDED_CHANNEL_IDS", &cfg.Discord.ExcludedChannelIDs)
 	applyList("DISCORD_ALLOWED_BOT_USER_IDS", &cfg.Discord.AllowedBotUserIDs)
 	applyString("PERSONA_OWNER_USER_ID", &cfg.Persona.OwnerUserID)
+	applyString("PERSONA_TIMES_CHANNEL_ID", &cfg.Persona.TimesChannelID)
 	applyString("CODEX_COMMAND", &cfg.Codex.Command)
 	if v, ok := os.LookupEnv("CODEX_ARGS"); ok {
 		cfg.Codex.Args = parseArgs(v)
@@ -257,6 +263,9 @@ func applyEnvOverrides(cfg *Config) {
 	applyString("XAI_MODEL", &cfg.XAI.Model)
 	if v, ok := os.LookupEnv("XAI_TIMEOUT_SEC"); ok {
 		cfg.XAI.TimeoutSec = parseInt(v, cfg.XAI.TimeoutSec)
+	}
+	if v, ok := os.LookupEnv("PERSONA_TIMES_MIN_INTERVAL_SEC"); ok {
+		cfg.Persona.TimesMinIntervalS = parseInt(v, cfg.Persona.TimesMinIntervalS)
 	}
 }
 
