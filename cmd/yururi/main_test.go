@@ -60,68 +60,6 @@ func TestRunHeartbeatTurnCallsRuntime(t *testing.T) {
 	}
 }
 
-func TestShouldRecoverDiscordDelivery(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		input  codex.TurnResult
-		expect bool
-	}{
-		{
-			name:   "no assistant text",
-			input:  codex.TurnResult{AssistantText: "", ToolCalls: nil},
-			expect: false,
-		},
-		{
-			name:   "assistant text without action tool",
-			input:  codex.TurnResult{AssistantText: "こんにちは", ToolCalls: nil},
-			expect: true,
-		},
-		{
-			name: "assistant text with reply tool",
-			input: codex.TurnResult{
-				AssistantText: "こんにちは",
-				ToolCalls: []codex.MCPToolCall{
-					{Tool: "reply_message", Status: "completed"},
-				},
-			},
-			expect: false,
-		},
-		{
-			name:   "assistant text with error detail",
-			input:  codex.TurnResult{AssistantText: "こんにちは", ErrorMessage: "failed"},
-			expect: false,
-		},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := shouldRecoverDiscordDelivery(tc.input)
-			if got != tc.expect {
-				t.Fatalf("shouldRecoverDiscordDelivery() = %v, want %v", got, tc.expect)
-			}
-		})
-	}
-}
-
-func TestBuildDeliveryRecoveryPrompt(t *testing.T) {
-	t.Parallel()
-
-	got := buildDeliveryRecoveryPrompt("c1", "m1", "返信案")
-	if !strings.Contains(got, "対象チャンネルID: c1") {
-		t.Fatalf("recovery prompt missing channel id: %q", got)
-	}
-	if !strings.Contains(got, "対象メッセージID: m1") {
-		t.Fatalf("recovery prompt missing message id: %q", got)
-	}
-	if !strings.Contains(got, "reply_message") || !strings.Contains(got, "send_message") {
-		t.Fatalf("recovery prompt missing delivery tool instruction: %q", got)
-	}
-}
-
 type heartbeatRuntimeStub struct {
 	calls []codex.TurnInput
 }

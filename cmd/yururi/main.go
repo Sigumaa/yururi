@@ -188,24 +188,6 @@ func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orch
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=codex_turn_error_detail run_id=%s message=%s err=%s", runID, m.ID, result.ErrorMessage)
 	}
-	if shouldRecoverDiscordDelivery(result) {
-		recoveryRunID := runID + "-deliver"
-		log.Printf("event=discord_delivery_recovery_started run_id=%s message=%s channel=%s thread=%s turn=%s", recoveryRunID, m.ID, m.ChannelID, result.ThreadID, result.TurnID)
-		recoveryStarted := time.Now()
-		recoveryResult, recoveryErr := coordinator.RunMessageTurn(ctx, channelKey, codex.TurnInput{
-			BaseInstructions:      bundle.BaseInstructions,
-			DeveloperInstructions: bundle.DeveloperInstructions,
-			UserPrompt:            buildDeliveryRecoveryPrompt(m.ChannelID, m.ID, result.AssistantText),
-		})
-		if recoveryErr != nil {
-			log.Printf("event=discord_delivery_recovery_failed run_id=%s message=%s channel=%s turn_latency_ms=%d err=%v", recoveryRunID, m.ID, m.ChannelID, durationMS(time.Since(recoveryStarted)), recoveryErr)
-			return
-		}
-		log.Printf("event=discord_delivery_recovery_completed run_id=%s message=%s channel=%s status=%s thread=%s turn=%s tool_calls=%d turn_latency_ms=%d", recoveryRunID, m.ID, m.ChannelID, recoveryResult.Status, recoveryResult.ThreadID, recoveryResult.TurnID, len(recoveryResult.ToolCalls), durationMS(time.Since(recoveryStarted)))
-		if strings.TrimSpace(recoveryResult.ErrorMessage) != "" {
-			log.Printf("event=discord_delivery_recovery_error_detail run_id=%s message=%s err=%s", recoveryRunID, m.ID, recoveryResult.ErrorMessage)
-		}
-	}
 }
 
 func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatRuntime, runID string) error {
@@ -338,39 +320,4 @@ func normalizeMergedCount(v int) int {
 		return 1
 	}
 	return v
-}
-
-func shouldRecoverDiscordDelivery(result codex.TurnResult) bool {
-	if strings.TrimSpace(result.AssistantText) == "" {
-		return false
-	}
-	if strings.TrimSpace(result.ErrorMessage) != "" {
-		return false
-	}
-	return !hasDiscordActionToolCall(result.ToolCalls)
-}
-
-func hasDiscordActionToolCall(calls []codex.MCPToolCall) bool {
-	for _, call := range calls {
-		name := strings.ToLower(strings.TrimSpace(call.Tool))
-		switch name {
-		case "send_message", "reply_message", "add_reaction":
-			return true
-		}
-	}
-	return false
-}
-
-func buildDeliveryRecoveryPrompt(channelID string, messageID string, assistantText string) string {
-	return strings.Join([]string{
-		"直前のターンで返信文を作成しましたが、Discordへの送信ツール実行が行われていません。",
-		fmt.Sprintf("対象チャンネルID: %s", strings.TrimSpace(channelID)),
-		fmt.Sprintf("対象メッセージID: %s", strings.TrimSpace(messageID)),
-		"",
-		"このターンでは必ず `reply_message` または `send_message` を1回以上実行して完了してください。",
-		"返信として自然なら `reply_message` を優先し、一般投稿が自然なら `send_message` を使ってください。",
-		"",
-		"送信候補テキスト:",
-		strings.TrimSpace(assistantText),
-	}, "\n")
 }
