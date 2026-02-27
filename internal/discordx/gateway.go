@@ -156,7 +156,7 @@ func (g *Gateway) SendMessage(ctx context.Context, channelID string, content str
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	msg, err := g.session.ChannelMessageSend(channelID, text)
+	msg, err := g.session.ChannelMessageSendComplex(channelID, buildMessageSend(text))
 	if err != nil {
 		return "", fmt.Errorf("send message: %w", err)
 	}
@@ -177,18 +177,28 @@ func (g *Gateway) ReplyMessage(ctx context.Context, channelID string, replyToMes
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	msg, err := g.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Content: text,
-		Reference: &discordgo.MessageReference{
-			GuildID:   g.guildID,
-			ChannelID: channelID,
-			MessageID: replyToMessageID,
-		},
-	})
+	msg, err := g.session.ChannelMessageSendComplex(channelID, buildReplyMessageSend(g.guildID, channelID, replyToMessageID, text))
 	if err != nil {
 		return "", fmt.Errorf("send reply: %w", err)
 	}
 	return msg.ID, nil
+}
+
+func buildMessageSend(content string) *discordgo.MessageSend {
+	return &discordgo.MessageSend{
+		Content: content,
+		Flags:   discordgo.MessageFlagsSuppressEmbeds,
+	}
+}
+
+func buildReplyMessageSend(guildID string, channelID string, replyToMessageID string, content string) *discordgo.MessageSend {
+	msg := buildMessageSend(content)
+	msg.Reference = &discordgo.MessageReference{
+		GuildID:   guildID,
+		ChannelID: channelID,
+		MessageID: replyToMessageID,
+	}
+	return msg
 }
 
 func (g *Gateway) AddReaction(ctx context.Context, channelID string, messageID string, emoji string) error {

@@ -90,3 +90,36 @@ func TestGatewayChannelValidation(t *testing.T) {
 		t.Fatal("validateWritableChannel(observe) error = nil, want error")
 	}
 }
+
+func TestBuildMessageSendSuppressesEmbeds(t *testing.T) {
+	t.Parallel()
+
+	msg := buildMessageSend("https://example.com")
+	if msg == nil {
+		t.Fatal("buildMessageSend() = nil")
+	}
+	if msg.Content != "https://example.com" {
+		t.Fatalf("content = %q, want %q", msg.Content, "https://example.com")
+	}
+	if msg.Flags&discordgo.MessageFlagsSuppressEmbeds == 0 {
+		t.Fatalf("flags = %v, want include MessageFlagsSuppressEmbeds", msg.Flags)
+	}
+}
+
+func TestBuildReplyMessageSendSuppressesEmbedsAndReference(t *testing.T) {
+	t.Parallel()
+
+	msg := buildReplyMessageSend("g1", "c1", "m1", "https://example.com")
+	if msg == nil {
+		t.Fatal("buildReplyMessageSend() = nil")
+	}
+	if msg.Flags&discordgo.MessageFlagsSuppressEmbeds == 0 {
+		t.Fatalf("flags = %v, want include MessageFlagsSuppressEmbeds", msg.Flags)
+	}
+	if msg.Reference == nil {
+		t.Fatal("reference = nil")
+	}
+	if msg.Reference.GuildID != "g1" || msg.Reference.ChannelID != "c1" || msg.Reference.MessageID != "m1" {
+		t.Fatalf("reference = %#v, want guild/channel/message = g1/c1/m1", msg.Reference)
+	}
+}

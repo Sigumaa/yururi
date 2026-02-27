@@ -84,6 +84,8 @@ go run ./cmd/yururi -config runtime/config.yaml
 - `append_workspace_doc`
 - `replace_workspace_doc`
 
+`send_message` と `reply_message` は既定でURLプレビューを抑制する。
+
 ## 検証
 
 ```bash

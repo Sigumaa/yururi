@@ -67,6 +67,7 @@
    - `reply_message(channel_id, reply_to_message_id, content)`
    - `add_reaction(channel_id, message_id, emoji)`
    - `start_typing(channel_id, source, duration_sec?)`
+   - `send_message` と `reply_message` はURLプレビュー抑制（`SUPPRESS_EMBEDS`）を既定で有効化する。
 2. Utility tools:
    - `get_current_time(timezone?)`（未指定時`Asia/Tokyo`）
    - `x_search(query, allowed_x_handles?, excluded_x_handles?, from_date?, to_date?, enable_image_understanding?, enable_video_understanding?)`
