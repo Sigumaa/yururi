@@ -37,12 +37,19 @@ type heartbeatWhisperSender interface {
 	SendMessage(ctx context.Context, channelID string, content string) (string, error)
 }
 
+type heartbeatWhisperHistoryReader interface {
+	ReadMessageHistory(ctx context.Context, channelID string, beforeMessageID string, limit int) ([]discordx.Message, error)
+}
+
 type timesWhisperState struct {
 	mu     sync.Mutex
 	lastAt time.Time
 }
 
-const maxHeartbeatLogValueLen = 280
+const (
+	maxHeartbeatLogValueLen        = 280
+	timesWhisperDedupeHistoryLimit = 20
+)
 
 func main() {
 	configPath := flag.String("config", "runtime/config.yaml", "path to config yaml")
@@ -535,6 +542,12 @@ func postHeartbeatWhisper(ctx context.Context, cfg config.Config, sender heartbe
 		log.Printf("event=heartbeat_times_suppressed run_id=%s channel=%s reason=min_interval", runID, channelID)
 		return nil
 	}
+	if duplicated, err := shouldSuppressDuplicateWhisper(ctx, sender, channelID, content); err != nil {
+		log.Printf("event=heartbeat_times_dedupe_history_failed run_id=%s channel=%s err=%v", runID, channelID, err)
+	} else if duplicated {
+		log.Printf("event=heartbeat_times_suppressed run_id=%s channel=%s reason=duplicate_recent", runID, channelID)
+		return nil
+	}
 	if _, err := sender.SendMessage(ctx, channelID, content); err != nil {
 		return err
 	}
@@ -582,6 +595,12 @@ func postMessageWhisper(ctx context.Context, cfg config.Config, sender heartbeat
 	minInterval := time.Duration(cfg.Persona.TimesMinIntervalS) * time.Second
 	if whisperState != nil && !whisperState.shouldSend(time.Now().UTC(), minInterval) {
 		log.Printf("event=message_times_suppressed run_id=%s channel=%s reason=min_interval", runID, channelID)
+		return nil
+	}
+	if duplicated, err := shouldSuppressDuplicateWhisper(ctx, sender, channelID, content); err != nil {
+		log.Printf("event=message_times_dedupe_history_failed run_id=%s channel=%s err=%v", runID, channelID, err)
+	} else if duplicated {
+		log.Printf("event=message_times_suppressed run_id=%s channel=%s reason=duplicate_recent", runID, channelID)
 		return nil
 	}
 	if _, err := sender.SendMessage(ctx, channelID, content); err != nil {
@@ -683,6 +702,35 @@ func selectPersonaWhisperText(text string) (string, bool) {
 		return "", false
 	}
 	return line, true
+}
+
+func shouldSuppressDuplicateWhisper(ctx context.Context, sender heartbeatWhisperSender, channelID string, content string) (bool, error) {
+	if sender == nil {
+		return false, nil
+	}
+	reader, ok := sender.(heartbeatWhisperHistoryReader)
+	if !ok {
+		return false, nil
+	}
+	normalized := normalizeWhisperContent(content)
+	if normalized == "" {
+		return false, nil
+	}
+	history, err := reader.ReadMessageHistory(ctx, channelID, "", timesWhisperDedupeHistoryLimit)
+	if err != nil {
+		return false, err
+	}
+	for _, msg := range history {
+		if normalizeWhisperContent(msg.Content) == normalized {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func normalizeWhisperContent(text string) string {
+	normalized := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	return strings.ToLower(normalized)
 }
 
 func logDecisionSummary(eventPrefix string, runID string, threadID string, turnID string, assistantText string) {

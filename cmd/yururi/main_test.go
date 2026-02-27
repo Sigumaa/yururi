@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"math"
 	"strings"
 	"testing"
@@ -159,6 +160,82 @@ func TestRunHeartbeatTurnTimesWhisperRespectsMinInterval(t *testing.T) {
 	}
 	if err := runHeartbeatTurn(context.Background(), cfg, runtime, sender, state, "hb-2"); err != nil {
 		t.Fatalf("runHeartbeatTurn() second error = %v", err)
+	}
+	if len(sender.messages) != 1 {
+		t.Fatalf("times whisper count = %d, want 1", len(sender.messages))
+	}
+}
+
+func TestPostHeartbeatWhisperSuppressesDuplicateRecent(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		Persona: config.PersonaConfig{
+			TimesChannelID: "times",
+		},
+	}
+	sender := &heartbeatWhisperSenderStub{
+		history: []discordx.Message{
+			{Content: "同じ   内容"},
+		},
+	}
+	result := codex.TurnResult{
+		AssistantText: "同じ 内容",
+	}
+
+	if err := postHeartbeatWhisper(context.Background(), cfg, sender, &timesWhisperState{}, "hb-dup", result); err != nil {
+		t.Fatalf("postHeartbeatWhisper() error = %v", err)
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("times whisper count = %d, want 0", len(sender.messages))
+	}
+	if sender.readHistoryCalls != 1 {
+		t.Fatalf("read history calls = %d, want 1", sender.readHistoryCalls)
+	}
+}
+
+func TestPostMessageWhisperSuppressesDuplicateRecent(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		Persona: config.PersonaConfig{
+			TimesChannelID: "times",
+		},
+	}
+	sender := &heartbeatWhisperSenderStub{
+		history: []discordx.Message{
+			{Content: "dupe message"},
+		},
+	}
+	result := codex.TurnResult{
+		AssistantText: "dupe message",
+	}
+
+	if err := postMessageWhisper(context.Background(), cfg, sender, &timesWhisperState{}, "msg-dup", nil, result); err != nil {
+		t.Fatalf("postMessageWhisper() error = %v", err)
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("times whisper count = %d, want 0", len(sender.messages))
+	}
+}
+
+func TestPostHeartbeatWhisperStillPostsWhenHistoryReadFails(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		Persona: config.PersonaConfig{
+			TimesChannelID: "times",
+		},
+	}
+	sender := &heartbeatWhisperSenderStub{
+		historyErr: errors.New("history failed"),
+	}
+	result := codex.TurnResult{
+		AssistantText: "history failure fallback",
+	}
+
+	if err := postHeartbeatWhisper(context.Background(), cfg, sender, &timesWhisperState{}, "hb-history-err", result); err != nil {
+		t.Fatalf("postHeartbeatWhisper() error = %v", err)
 	}
 	if len(sender.messages) != 1 {
 		t.Fatalf("times whisper count = %d, want 1", len(sender.messages))
@@ -503,7 +580,10 @@ func (s *heartbeatRuntimeStub) RunTurn(_ context.Context, input codex.TurnInput)
 }
 
 type heartbeatWhisperSenderStub struct {
-	messages []whisperMessage
+	messages         []whisperMessage
+	history          []discordx.Message
+	historyErr       error
+	readHistoryCalls int
 }
 
 type whisperMessage struct {
@@ -517,4 +597,14 @@ func (s *heartbeatWhisperSenderStub) SendMessage(_ context.Context, channelID st
 		content:   content,
 	})
 	return "m1", nil
+}
+
+func (s *heartbeatWhisperSenderStub) ReadMessageHistory(_ context.Context, _ string, _ string, _ int) ([]discordx.Message, error) {
+	s.readHistoryCalls++
+	if s.historyErr != nil {
+		return nil, s.historyErr
+	}
+	out := make([]discordx.Message, len(s.history))
+	copy(out, s.history)
+	return out, nil
 }
