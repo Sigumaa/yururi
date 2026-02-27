@@ -71,6 +71,9 @@ codex:
 	if cfg.Persona.TimesMinIntervalS != 0 {
 		t.Fatalf("Persona.TimesMinIntervalS = %d, want 0", cfg.Persona.TimesMinIntervalS)
 	}
+	if len(cfg.Discord.ObserveCategoryIDs) != 0 {
+		t.Fatalf("Discord.ObserveCategoryIDs = %v, want empty", cfg.Discord.ObserveCategoryIDs)
+	}
 }
 
 func TestLoadAppliesEnvOverrides(t *testing.T) {
@@ -99,6 +102,7 @@ mcp:
 	t.Setenv("MCP_TOOL_POLICY_ALLOW_PATTERNS", "read_*, get_current_time")
 	t.Setenv("MCP_TOOL_POLICY_DENY_PATTERNS", "replace_workspace_doc")
 	t.Setenv("DISCORD_OBSERVE_CHANNEL_IDS", "observe-1,observe-2")
+	t.Setenv("DISCORD_OBSERVE_CATEGORY_IDS", "cat-1,cat-2")
 	t.Setenv("HEARTBEAT_ENABLED", "false")
 	t.Setenv("AUTONOMY_ENABLED", "true")
 	t.Setenv("AUTONOMY_CRON", "0 */5 * * * *")
@@ -156,6 +160,9 @@ mcp:
 	}
 	if got, want := cfg.Discord.ObserveChannelIDs, []string{"observe-1", "observe-2"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("Discord.ObserveChannelIDs = %v, want %v", got, want)
+	}
+	if got, want := cfg.Discord.ObserveCategoryIDs, []string{"cat-1", "cat-2"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("Discord.ObserveCategoryIDs = %v, want %v", got, want)
 	}
 	if cfg.Persona.TimesChannelID != "times-channel" {
 		t.Fatalf("Persona.TimesChannelID = %q, want times-channel", cfg.Persona.TimesChannelID)

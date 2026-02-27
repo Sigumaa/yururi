@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bwmarrin/discordgo"
 	"github.com/sigumaa/yururi/internal/codex"
 	"github.com/sigumaa/yururi/internal/config"
 	"github.com/sigumaa/yururi/internal/prompt"
@@ -79,10 +80,8 @@ func TestRunHeartbeatTurnPostsTimesWhisperWhenWorkExists(t *testing.T) {
 	}
 	runtime := &heartbeatRuntimeStub{
 		result: codex.TurnResult{
-			Status: "completed",
-			ToolCalls: []codex.MCPToolCall{
-				{Tool: "read_workspace_doc", Status: "completed"},
-			},
+			Status:        "completed",
+			AssistantText: "HEARTBEAT.md の内容を確認しました。今回は追加で対応することはありません。",
 		},
 	}
 	sender := &heartbeatWhisperSenderStub{}
@@ -96,7 +95,7 @@ func TestRunHeartbeatTurnPostsTimesWhisperWhenWorkExists(t *testing.T) {
 	if sender.messages[0].channelID != "times" {
 		t.Fatalf("times whisper channel = %q, want times", sender.messages[0].channelID)
 	}
-	if !strings.Contains(sender.messages[0].content, "定期チェック") {
+	if !strings.Contains(sender.messages[0].content, "HEARTBEAT.md の内容を確認しました") {
 		t.Fatalf("times whisper content missing summary: %q", sender.messages[0].content)
 	}
 }
@@ -146,10 +145,8 @@ func TestRunHeartbeatTurnTimesWhisperRespectsMinInterval(t *testing.T) {
 	}
 	runtime := &heartbeatRuntimeStub{
 		result: codex.TurnResult{
-			Status: "completed",
-			ToolCalls: []codex.MCPToolCall{
-				{Tool: "read_workspace_doc", Status: "completed"},
-			},
+			Status:        "completed",
+			AssistantText: "定期チェック完了。今回は様子見します。",
 		},
 	}
 	sender := &heartbeatWhisperSenderStub{}
@@ -189,10 +186,10 @@ func TestBuildMessageWhisperMessage(t *testing.T) {
 				AssistantText: "この話題は返信不要だけど自分は賛成です",
 			},
 			wantOK:  true,
-			wantHas: "所感=",
+			wantHas: "この話題は返信不要だけど自分は賛成です",
 		},
 		{
-			name: "prefer tool summary when tools exist",
+			name: "keep assistant text even when tools exist",
 			result: codex.TurnResult{
 				AssistantText: "👀でリアクションしておいたよ。\nあわせて運用メモを更新した。",
 				ToolCalls: []codex.MCPToolCall{
@@ -201,7 +198,7 @@ func TestBuildMessageWhisperMessage(t *testing.T) {
 				},
 			},
 			wantOK:  true,
-			wantHas: "対応=add_reaction(completed), append_workspace_doc(completed)",
+			wantHas: "👀でリアクションしておいたよ。",
 		},
 		{
 			name: "skip noop decision",
@@ -216,7 +213,7 @@ func TestBuildMessageWhisperMessage(t *testing.T) {
 				ErrorMessage: "network error",
 			},
 			wantOK:  true,
-			wantHas: "エラー=",
+			wantHas: "network error",
 		},
 	}
 
@@ -224,7 +221,7 @@ func TestBuildMessageWhisperMessage(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			content, ok := buildMessageWhisperMessage("run-1", "chat", tc.result)
+			content, ok := buildMessageWhisperMessage(tc.result)
 			if ok != tc.wantOK {
 				t.Fatalf("buildMessageWhisperMessage() ok = %v, want %v", ok, tc.wantOK)
 			}
@@ -277,6 +274,54 @@ func TestTrimLogAny(t *testing.T) {
 	}
 	if got := trimLogAny(math.NaN(), 20); got != "NaN" {
 		t.Fatalf("trimLogAny(NaN, 20) = %q, want %q", got, "NaN")
+	}
+}
+
+func TestExpandObserveChannelIDsByCategory(t *testing.T) {
+	t.Parallel()
+
+	base := []string{"manual-1", " manual-2 ", "manual-1"}
+	categories := []string{"cat-a", " cat-b "}
+	channels := []*discordgo.Channel{
+		{ID: "text-2", ParentID: "cat-b", Type: discordgo.ChannelTypeGuildText},
+		{ID: "text-1", ParentID: "cat-a", Type: discordgo.ChannelTypeGuildText},
+		{ID: "news-1", ParentID: "cat-a", Type: discordgo.ChannelTypeGuildNews},
+		{ID: "thread-1", ParentID: "cat-a", Type: discordgo.ChannelTypeGuildPublicThread},
+		{ID: "manual-1", ParentID: "cat-a", Type: discordgo.ChannelTypeGuildText},
+		{ID: "text-3", ParentID: "cat-c", Type: discordgo.ChannelTypeGuildText},
+	}
+
+	got := expandObserveChannelIDsByCategory(base, categories, channels)
+	want := []string{"manual-1", "manual-2", "text-1", "text-2"}
+	if len(got) != len(want) {
+		t.Fatalf("expandObserveChannelIDsByCategory() len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expandObserveChannelIDsByCategory()[%d] = %q, want %q (%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
+func TestResolveObserveTextChannelsWithoutSession(t *testing.T) {
+	t.Parallel()
+
+	got, err := resolveObserveTextChannels(nil, config.DiscordConfig{
+		GuildID:            "guild",
+		ObserveChannelIDs:  []string{"observe-1", " observe-1 ", "observe-2"},
+		ObserveCategoryIDs: []string{"cat-1"},
+	})
+	if err != nil {
+		t.Fatalf("resolveObserveTextChannels() error = %v", err)
+	}
+	want := []string{"observe-1", "observe-2"}
+	if len(got) != len(want) {
+		t.Fatalf("resolveObserveTextChannels() len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("resolveObserveTextChannels()[%d] = %q, want %q (%v)", i, got[i], want[i], got)
+		}
 	}
 }
 

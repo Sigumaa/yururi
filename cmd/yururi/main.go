@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,6 +61,17 @@ func main() {
 		log.Fatalf("create discord session: %v", err)
 	}
 	discord.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsMessageContent
+
+	resolvedObserve, err := resolveObserveTextChannels(discord, cfg.Discord)
+	if err != nil {
+		log.Printf("event=observe_categories_resolve_failed guild=%s categories=%d err=%v", cfg.Discord.GuildID, len(cfg.Discord.ObserveCategoryIDs), err)
+	} else {
+		added := len(resolvedObserve) - len(cfg.Discord.ObserveChannelIDs)
+		cfg.Discord.ObserveChannelIDs = resolvedObserve
+		if added > 0 {
+			log.Printf("event=observe_categories_resolved guild=%s categories=%d observe_channels=%d added=%d", cfg.Discord.GuildID, len(cfg.Discord.ObserveCategoryIDs), len(cfg.Discord.ObserveChannelIDs), added)
+		}
+	}
 
 	gateway := discordx.NewGateway(discord, cfg.Discord)
 	var xSearchClient *xai.Client
@@ -237,7 +249,7 @@ func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orch
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=codex_turn_error_detail run_id=%s message=%s err=%s", runID, m.ID, result.ErrorMessage)
 	}
-	if err := postMessageWhisper(ctx, cfg, gateway, whisperState, runID, m, channelName, result); err != nil {
+	if err := postMessageWhisper(ctx, cfg, gateway, whisperState, runID, m, result); err != nil {
 		log.Printf("event=message_times_post_failed run_id=%s message=%s err=%v", runID, m.ID, err)
 	}
 }
@@ -523,7 +535,7 @@ func postHeartbeatWhisper(ctx context.Context, cfg config.Config, sender heartbe
 	if channelID == "" || sender == nil {
 		return nil
 	}
-	content, ok := buildHeartbeatWhisperMessage(runID, result)
+	content, ok := buildHeartbeatWhisperMessage(result)
 	if !ok {
 		return nil
 	}
@@ -563,7 +575,7 @@ func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string)
 	return strings.Join(lines, "\n")
 }
 
-func postMessageWhisper(ctx context.Context, cfg config.Config, sender heartbeatWhisperSender, whisperState *timesWhisperState, runID string, message *discordgo.MessageCreate, channelName string, result codex.TurnResult) error {
+func postMessageWhisper(ctx context.Context, cfg config.Config, sender heartbeatWhisperSender, whisperState *timesWhisperState, runID string, message *discordgo.MessageCreate, result codex.TurnResult) error {
 	channelID := strings.TrimSpace(cfg.Persona.TimesChannelID)
 	if channelID == "" || sender == nil {
 		return nil
@@ -571,7 +583,7 @@ func postMessageWhisper(ctx context.Context, cfg config.Config, sender heartbeat
 	if message != nil && strings.TrimSpace(message.ChannelID) == channelID {
 		return nil
 	}
-	content, ok := buildMessageWhisperMessage(runID, channelName, result)
+	content, ok := buildMessageWhisperMessage(result)
 	if !ok {
 		return nil
 	}
@@ -594,31 +606,25 @@ func postMessageWhisper(ctx context.Context, cfg config.Config, sender heartbeat
 	return nil
 }
 
-func buildHeartbeatWhisperMessage(runID string, result codex.TurnResult) (string, bool) {
+func buildHeartbeatWhisperMessage(result codex.TurnResult) (string, bool) {
 	action, summary, hasDecision := heartbeatDecisionSummary(result.AssistantText)
 	errMsg := strings.TrimSpace(result.ErrorMessage)
-	shouldPost := errMsg != "" || len(result.ToolCalls) > 0 || (hasDecision && action != "noop")
-	if !shouldPost {
-		return "", false
-	}
-
-	lines := []string{
-		"ゆるりのつぶやき: 定期チェック",
-		fmt.Sprintf("run=%s status=%s", runID, fallbackForLog(result.Status, "unknown")),
-	}
 	if hasDecision {
-		lines = append(lines, fmt.Sprintf("判断=%s", action))
-		if action != "noop" && strings.TrimSpace(summary) != "" {
-			lines = append(lines, "要点="+trimLogString(summary, 140))
+		if action == "noop" && strings.TrimSpace(summary) == "" && errMsg == "" && len(result.ToolCalls) == 0 {
+			return "", false
+		}
+		if strings.TrimSpace(summary) != "" {
+			return trimLogString(summary, 280), true
 		}
 	}
-	if len(result.ToolCalls) > 0 {
-		lines = append(lines, "実行="+summarizeToolCalls(result.ToolCalls, 4))
+	text := strings.TrimSpace(result.AssistantText)
+	if text != "" && !hasDecision {
+		return trimLogString(text, 280), true
 	}
 	if errMsg != "" {
-		lines = append(lines, "エラー="+trimLogString(errMsg, 140))
+		return trimLogString(errMsg, 280), true
 	}
-	return strings.Join(lines, "\n"), true
+	return "", false
 }
 
 func heartbeatDecisionSummary(assistantText string) (action string, summary string, ok bool) {
@@ -645,7 +651,7 @@ func messageDecisionSummary(assistantText string) (action string, summary string
 	return strings.TrimSpace(decision.Action), strings.TrimSpace(decision.Content), true
 }
 
-func buildMessageWhisperMessage(runID string, channelName string, result codex.TurnResult) (string, bool) {
+func buildMessageWhisperMessage(result codex.TurnResult) (string, bool) {
 	if hasDeliveryToolCall(result.ToolCalls) {
 		return "", false
 	}
@@ -657,67 +663,18 @@ func buildMessageWhisperMessage(runID string, channelName string, result codex.T
 
 	text := ""
 	if hasDecision {
-		text = sanitizeWhisperText(summary)
-	} else if len(result.ToolCalls) > 0 {
-		// Prefer objective action summary when tool calls exist.
-		text = "対応=" + summarizeToolCalls(result.ToolCalls, 3)
+		text = strings.TrimSpace(summary)
 	} else {
-		text = sanitizeWhisperText(result.AssistantText)
+		text = strings.TrimSpace(result.AssistantText)
 	}
-	text = trimLogString(text, 140)
+	text = trimLogString(text, 280)
 	if text == "" && errMsg == "" {
 		return "", false
 	}
-
-	lines := []string{
-		"ゆるりのつぶやき: 観察メモ",
-		fmt.Sprintf("run=%s channel=%s", runID, fallbackForLog(channelName, "unknown")),
-	}
 	if text != "" {
-		lines = append(lines, "所感="+text)
+		return text, true
 	}
-	if errMsg != "" {
-		lines = append(lines, "エラー="+trimLogString(errMsg, 140))
-	}
-	return strings.Join(lines, "\n"), true
-}
-
-func sanitizeWhisperText(text string) string {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return ""
-	}
-	line := strings.Split(trimmed, "\n")[0]
-	line = strings.TrimSpace(line)
-	line = strings.TrimPrefix(line, "- ")
-	line = strings.TrimPrefix(line, "* ")
-	return strings.TrimSpace(line)
-}
-
-func summarizeToolCalls(toolCalls []codex.MCPToolCall, limit int) string {
-	if len(toolCalls) == 0 {
-		return "none"
-	}
-	if limit <= 0 {
-		limit = len(toolCalls)
-	}
-	parts := make([]string, 0, limit)
-	for i, call := range toolCalls {
-		if i >= limit {
-			parts = append(parts, fmt.Sprintf("...(+%d)", len(toolCalls)-limit))
-			break
-		}
-		name := strings.TrimSpace(call.Tool)
-		if name == "" {
-			name = "unknown_tool"
-		}
-		status := strings.TrimSpace(call.Status)
-		if status == "" {
-			status = "unknown"
-		}
-		parts = append(parts, name+"("+status+")")
-	}
-	return strings.Join(parts, ", ")
+	return trimLogString(errMsg, 280), true
 }
 
 func hasDeliveryToolCall(toolCalls []codex.MCPToolCall) bool {
@@ -728,6 +685,88 @@ func hasDeliveryToolCall(toolCalls []codex.MCPToolCall) bool {
 		}
 	}
 	return false
+}
+
+func resolveObserveTextChannels(session *discordgo.Session, discordCfg config.DiscordConfig) ([]string, error) {
+	base := uniqueTrimmedValues(discordCfg.ObserveChannelIDs)
+	categoryIDs := uniqueTrimmedValues(discordCfg.ObserveCategoryIDs)
+	if len(categoryIDs) == 0 || session == nil {
+		return base, nil
+	}
+	guildID := strings.TrimSpace(discordCfg.GuildID)
+	if guildID == "" {
+		return base, nil
+	}
+	channels, err := session.GuildChannels(guildID)
+	if err != nil {
+		return nil, fmt.Errorf("list guild channels: %w", err)
+	}
+	return expandObserveChannelIDsByCategory(base, categoryIDs, channels), nil
+}
+
+func expandObserveChannelIDsByCategory(base []string, categoryIDs []string, channels []*discordgo.Channel) []string {
+	out := uniqueTrimmedValues(base)
+	if len(categoryIDs) == 0 || len(channels) == 0 {
+		return out
+	}
+
+	categorySet := make(map[string]struct{}, len(categoryIDs))
+	for _, id := range categoryIDs {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		categorySet[trimmed] = struct{}{}
+	}
+	if len(categorySet) == 0 {
+		return out
+	}
+
+	exists := make(map[string]struct{}, len(out))
+	for _, id := range out {
+		exists[id] = struct{}{}
+	}
+	discovered := make([]string, 0)
+	for _, ch := range channels {
+		if ch == nil {
+			continue
+		}
+		if _, ok := categorySet[strings.TrimSpace(ch.ParentID)]; !ok {
+			continue
+		}
+		if ch.Type != discordgo.ChannelTypeGuildText {
+			continue
+		}
+		channelID := strings.TrimSpace(ch.ID)
+		if channelID == "" {
+			continue
+		}
+		if _, ok := exists[channelID]; ok {
+			continue
+		}
+		exists[channelID] = struct{}{}
+		discovered = append(discovered, channelID)
+	}
+
+	sort.Strings(discovered)
+	return append(out, discovered...)
+}
+
+func uniqueTrimmedValues(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	return out
 }
 
 func fallbackForLog(value string, fallback string) string {

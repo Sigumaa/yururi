@@ -42,6 +42,7 @@ type DiscordConfig struct {
 	GuildID            string   `yaml:"guild_id"`
 	TargetChannelIDs   []string `yaml:"target_channel_ids"`
 	ObserveChannelIDs  []string `yaml:"observe_channel_ids"`
+	ObserveCategoryIDs []string `yaml:"observe_category_ids"`
 	ExcludedChannelIDs []string `yaml:"excluded_channel_ids"`
 	AllowedBotUserIDs  []string `yaml:"allowed_bot_user_ids"`
 }
@@ -259,6 +260,7 @@ func (c *Config) normalize() {
 	}
 	c.Discord.TargetChannelIDs = cleanList(c.Discord.TargetChannelIDs)
 	c.Discord.ObserveChannelIDs = cleanList(c.Discord.ObserveChannelIDs)
+	c.Discord.ObserveCategoryIDs = cleanList(c.Discord.ObserveCategoryIDs)
 	c.Discord.ExcludedChannelIDs = cleanList(c.Discord.ExcludedChannelIDs)
 	c.Discord.AllowedBotUserIDs = cleanList(c.Discord.AllowedBotUserIDs)
 	c.MCP.ToolPolicy.AllowPatterns = cleanList(c.MCP.ToolPolicy.AllowPatterns)
@@ -284,6 +286,7 @@ func applyEnvOverrides(cfg *Config) {
 	applyString("DISCORD_GUILD_ID", &cfg.Discord.GuildID)
 	applyList("DISCORD_TARGET_CHANNEL_IDS", &cfg.Discord.TargetChannelIDs)
 	applyList("DISCORD_OBSERVE_CHANNEL_IDS", &cfg.Discord.ObserveChannelIDs)
+	applyList("DISCORD_OBSERVE_CATEGORY_IDS", &cfg.Discord.ObserveCategoryIDs)
 	applyList("DISCORD_EXCLUDED_CHANNEL_IDS", &cfg.Discord.ExcludedChannelIDs)
 	applyList("DISCORD_ALLOWED_BOT_USER_IDS", &cfg.Discord.AllowedBotUserIDs)
 	applyString("PERSONA_OWNER_USER_ID", &cfg.Persona.OwnerUserID)

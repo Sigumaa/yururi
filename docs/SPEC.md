@@ -19,6 +19,7 @@
    - `discord.guild_id`
    - `discord.target_channel_ids[]`
    - `discord.observe_channel_ids[]`
+   - `discord.observe_category_ids[]`
    - `discord.excluded_channel_ids[]`
    - `discord.allowed_bot_user_ids[]`
    - `persona.owner_user_id`
@@ -101,9 +102,10 @@
 8. typing停止・メタログ出力。
 9. heartbeat時は`HEARTBEAT.md`の指示に従って必要時のみ行動する。
 10. heartbeat実行ログには`assistant_text`、decision要約（parse可否含む）、tool call詳細（server/tool/status/arguments/result）を出力する。
-11. `persona.times_channel_id`が設定されている場合、heartbeatと通常メッセージ処理の両方で、返信するほどではないが共有価値がある所感や実行結果を短く自律つぶやき投稿してよい。投稿間隔は`persona.times_min_interval_sec`で抑制する。
+11. `persona.times_channel_id`が設定されている場合、heartbeatと通常メッセージ処理の両方で、返信するほどではないが共有価値がある所感や実行結果を自律つぶやき投稿してよい。投稿本文の形式は固定しない。投稿間隔は`persona.times_min_interval_sec`で抑制する。
 12. `discord.observe_channel_ids[]` は読み取り専用チャンネルとし、観察・調査対象に含めてよいが直接投稿はしない。
-13. `autonomy.enabled`がtrueの場合、通常heartbeatとは別に自律観察ループを実行し、観察可能チャンネルやtwilog-mcpを使った調査を行ってよい。
+13. `discord.observe_category_ids[]` が設定されている場合、起動時に該当カテゴリ配下のテキストチャンネル（`GuildText`）を `observe_channel_ids[]` に展開して読み取り対象へ追加する。
+14. `autonomy.enabled`がtrueの場合、通常heartbeatとは別に自律観察ループを実行し、観察可能チャンネルやtwilog-mcpを使った調査を行ってよい。
 
 ## 制約と運用ルール
 1. 指定チャンネル外では動作しない。
