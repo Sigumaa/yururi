@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -19,6 +20,9 @@ const (
 	defaultMCPBind              = "127.0.0.1:39393"
 	defaultHeartbeatCron        = "0 */30 * * * *"
 	defaultHeartbeatTimezone    = "Asia/Tokyo"
+	defaultXAIBaseURL           = "https://api.x.ai/v1"
+	defaultXAIModel             = "grok-4-1-fast-non-reasoning"
+	defaultXAITimeoutSec        = 30
 )
 
 var defaultCodexArgs = []string{"--search", "app-server", "--listen", "stdio://"}
@@ -29,6 +33,7 @@ type Config struct {
 	Codex     CodexConfig     `yaml:"codex"`
 	MCP       MCPConfig       `yaml:"mcp"`
 	Heartbeat HeartbeatConfig `yaml:"heartbeat"`
+	XAI       XAIConfig       `yaml:"xai"`
 }
 
 type DiscordConfig struct {
@@ -71,6 +76,14 @@ type HeartbeatConfig struct {
 	Timezone string `yaml:"timezone"`
 }
 
+type XAIConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	APIKey     string `yaml:"api_key"`
+	BaseURL    string `yaml:"base_url"`
+	Model      string `yaml:"model"`
+	TimeoutSec int    `yaml:"timeout_sec"`
+}
+
 var (
 	currentMCPToolPolicyMu sync.RWMutex
 	currentMCPToolPolicy   MCPToolPolicyConfig
@@ -91,6 +104,12 @@ func Load(path string) (Config, error) {
 			Enabled:  true,
 			Cron:     defaultHeartbeatCron,
 			Timezone: defaultHeartbeatTimezone,
+		},
+		XAI: XAIConfig{
+			Enabled:    false,
+			BaseURL:    defaultXAIBaseURL,
+			Model:      defaultXAIModel,
+			TimeoutSec: defaultXAITimeoutSec,
 		},
 	}
 
@@ -150,6 +169,11 @@ func (c Config) Validate() error {
 			return errors.New("heartbeat.timezone is required when heartbeat.enabled=true")
 		}
 	}
+	if c.XAI.Enabled {
+		if c.XAI.APIKey == "" {
+			return errors.New("xai.api_key is required when xai.enabled=true")
+		}
+	}
 	return nil
 }
 
@@ -170,6 +194,19 @@ func (c *Config) normalize() {
 
 	if strings.TrimSpace(c.MCP.URL) == "" {
 		c.MCP.URL = "http://" + c.MCP.Bind + "/mcp"
+	}
+	if strings.TrimSpace(c.XAI.BaseURL) == "" {
+		c.XAI.BaseURL = defaultXAIBaseURL
+	}
+	c.XAI.BaseURL = strings.TrimRight(strings.TrimSpace(c.XAI.BaseURL), "/")
+	if c.XAI.BaseURL == "" {
+		c.XAI.BaseURL = defaultXAIBaseURL
+	}
+	if strings.TrimSpace(c.XAI.Model) == "" {
+		c.XAI.Model = defaultXAIModel
+	}
+	if c.XAI.TimeoutSec <= 0 {
+		c.XAI.TimeoutSec = defaultXAITimeoutSec
 	}
 	c.MCP.ToolPolicy.AllowPatterns = cleanList(c.MCP.ToolPolicy.AllowPatterns)
 	c.MCP.ToolPolicy.DenyPatterns = cleanList(c.MCP.ToolPolicy.DenyPatterns)
@@ -212,6 +249,15 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	applyString("HEARTBEAT_CRON", &cfg.Heartbeat.Cron)
 	applyString("HEARTBEAT_TIMEZONE", &cfg.Heartbeat.Timezone)
+	if v, ok := os.LookupEnv("XAI_ENABLED"); ok {
+		cfg.XAI.Enabled = parseBool(v, cfg.XAI.Enabled)
+	}
+	applyString("XAI_API_KEY", &cfg.XAI.APIKey)
+	applyString("XAI_BASE_URL", &cfg.XAI.BaseURL)
+	applyString("XAI_MODEL", &cfg.XAI.Model)
+	if v, ok := os.LookupEnv("XAI_TIMEOUT_SEC"); ok {
+		cfg.XAI.TimeoutSec = parseInt(v, cfg.XAI.TimeoutSec)
+	}
 }
 
 func parseArgs(v string) []string {
@@ -255,6 +301,18 @@ func parseBool(raw string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func parseInt(raw string, fallback int) int {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 func setCurrentMCPToolPolicy(policy MCPToolPolicyConfig) {

@@ -44,6 +44,18 @@ codex:
 	if !cfg.Heartbeat.Enabled {
 		t.Fatal("Heartbeat.Enabled = false, want true by default")
 	}
+	if cfg.XAI.Enabled {
+		t.Fatal("XAI.Enabled = true, want false by default")
+	}
+	if cfg.XAI.BaseURL != "https://api.x.ai/v1" {
+		t.Fatalf("XAI.BaseURL = %q", cfg.XAI.BaseURL)
+	}
+	if cfg.XAI.Model != "grok-4-1-fast-non-reasoning" {
+		t.Fatalf("XAI.Model = %q", cfg.XAI.Model)
+	}
+	if cfg.XAI.TimeoutSec != 30 {
+		t.Fatalf("XAI.TimeoutSec = %d", cfg.XAI.TimeoutSec)
+	}
 }
 
 func TestLoadAppliesEnvOverrides(t *testing.T) {
@@ -72,6 +84,11 @@ mcp:
 	t.Setenv("MCP_TOOL_POLICY_ALLOW_PATTERNS", "read_*, get_current_time")
 	t.Setenv("MCP_TOOL_POLICY_DENY_PATTERNS", "replace_workspace_doc")
 	t.Setenv("HEARTBEAT_ENABLED", "false")
+	t.Setenv("XAI_ENABLED", "true")
+	t.Setenv("XAI_API_KEY", "xai-key")
+	t.Setenv("XAI_BASE_URL", "https://api.x.ai/v1/")
+	t.Setenv("XAI_MODEL", "grok-4-1-fast-non-reasoning")
+	t.Setenv("XAI_TIMEOUT_SEC", "45")
 
 	cfg, err := Load(cfgPath)
 	if err != nil {
@@ -92,6 +109,21 @@ mcp:
 	if cfg.Heartbeat.Enabled {
 		t.Fatalf("Heartbeat.Enabled = true, want false")
 	}
+	if !cfg.XAI.Enabled {
+		t.Fatalf("XAI.Enabled = false, want true")
+	}
+	if cfg.XAI.APIKey != "xai-key" {
+		t.Fatalf("XAI.APIKey = %q", cfg.XAI.APIKey)
+	}
+	if cfg.XAI.BaseURL != "https://api.x.ai/v1" {
+		t.Fatalf("XAI.BaseURL = %q", cfg.XAI.BaseURL)
+	}
+	if cfg.XAI.Model != "grok-4-1-fast-non-reasoning" {
+		t.Fatalf("XAI.Model = %q", cfg.XAI.Model)
+	}
+	if cfg.XAI.TimeoutSec != 45 {
+		t.Fatalf("XAI.TimeoutSec = %d", cfg.XAI.TimeoutSec)
+	}
 
 	current := CurrentMCPToolPolicy()
 	if got, want := current.AllowPatterns, []string{"read_*", "get_current_time"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
@@ -99,5 +131,29 @@ mcp:
 	}
 	if got, want := current.DenyPatterns, []string{"replace_workspace_doc"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("CurrentMCPToolPolicy().DenyPatterns = %v, want %v", got, want)
+	}
+}
+
+func TestLoadRequiresXAIKeyWhenEnabled(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := `discord:
+  token: "token"
+  guild_id: "guild"
+  target_channel_ids: ["channel"]
+persona:
+  owner_user_id: "owner"
+codex:
+  command: "codex"
+  args: ["--search", "app-server", "--listen", "stdio://"]
+xai:
+  enabled: true
+`
+	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if _, err := Load(cfgPath); err == nil {
+		t.Fatal("Load() error = nil, want xai api key validation error")
 	}
 }

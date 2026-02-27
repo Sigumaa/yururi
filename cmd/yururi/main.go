@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os/signal"
 	"strings"
 	"sync/atomic"
@@ -21,6 +22,7 @@ import (
 	"github.com/sigumaa/yururi/internal/orchestrator"
 	"github.com/sigumaa/yururi/internal/policy"
 	"github.com/sigumaa/yururi/internal/prompt"
+	"github.com/sigumaa/yururi/internal/xai"
 )
 
 type heartbeatRuntime interface {
@@ -47,7 +49,19 @@ func main() {
 	discord.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsMessageContent
 
 	gateway := discordx.NewGateway(discord, cfg.Discord)
-	mcpSrv, err := mcpserver.New(cfg.MCP.Bind, cfg.Heartbeat.Timezone, cfg.Codex.WorkspaceDir, gateway)
+	var xSearchClient *xai.Client
+	if cfg.XAI.Enabled {
+		xSearchClient = xai.NewClient(xai.Config{
+			BaseURL: cfg.XAI.BaseURL,
+			APIKey:  cfg.XAI.APIKey,
+			Model:   cfg.XAI.Model,
+			HTTPClient: &http.Client{
+				Timeout: time.Duration(cfg.XAI.TimeoutSec) * time.Second,
+			},
+		})
+	}
+
+	mcpSrv, err := mcpserver.New(cfg.MCP.Bind, cfg.Heartbeat.Timezone, cfg.Codex.WorkspaceDir, gateway, xSearchClient)
 	if err != nil {
 		log.Fatalf("create mcp server: %v", err)
 	}
@@ -96,7 +110,14 @@ func main() {
 		runner.Start(ctx)
 	}
 
-	log.Printf("yururi started: mcp_url=%s model=%s reasoning=%s", cfg.MCP.URL, cfg.Codex.Model, cfg.Codex.ReasoningEffort)
+	log.Printf(
+		"yururi started: mcp_url=%s model=%s reasoning=%s x_search_enabled=%t x_search_model=%s",
+		cfg.MCP.URL,
+		cfg.Codex.Model,
+		cfg.Codex.ReasoningEffort,
+		cfg.XAI.Enabled,
+		cfg.XAI.Model,
+	)
 
 	select {
 	case <-ctx.Done():

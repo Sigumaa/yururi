@@ -35,8 +35,14 @@ Discord向け自律エージェント「ゆるり」。
 - `heartbeat.enabled`
 - `heartbeat.cron`
 - `heartbeat.timezone`
+- `xai.enabled`
+- `xai.api_key`
+- `xai.base_url`
+- `xai.model`
+- `xai.timeout_sec`
 
 `mcp.tool_policy.*` は `*` ワイルドカード対応、大小文字を区別しない。
+`x_search` を使う場合は `xai.enabled=true` と `xai.api_key` を設定する。
 
 ## 起動
 
@@ -62,6 +68,7 @@ go run ./cmd/yururi -config runtime/config.yaml
 - `list_channels`
 - `get_user_detail`
 - `get_current_time`
+- `x_search`
 - `read_workspace_doc`
 - `append_workspace_doc`
 - `replace_workspace_doc`

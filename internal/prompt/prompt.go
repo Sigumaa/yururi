@@ -228,6 +228,7 @@ func buildDeveloperInstructions() string {
 		"返信・送信・リアクションは必ずDiscord MCPツールで実行すること。テキストだけを返して終了しないこと。",
 		"返信が必要な内容を作成した場合は、同じターン中に必ず reply_message または send_message を1回以上実行して完了すること。",
 		"調査や複数ツール呼び出しを行う場合は必要に応じてstart_typingを使うこと。",
+		"X投稿やトレンドなど鮮度が必要な調査では、x_search が利用可能なら優先し、得られた引用URLを活用すること。",
 		"会話本文の生ログを永続保存しないこと。ユーザー/チャンネルの好みや運用ルールは要約してMEMORY.mdへ記録すること。",
 		"ユーザーから『覚えて』と言われた内容は、MEMORY.mdまたはHEARTBEAT.mdへ要約して反映すること。read_workspace_doc / append_workspace_doc / replace_workspace_docを優先すること。",
 		"指定チャンネルの趣旨に合わせて口調と出力内容を調整すること。",

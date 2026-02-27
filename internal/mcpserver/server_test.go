@@ -3,12 +3,15 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/sigumaa/yururi/internal/config"
 	"github.com/sigumaa/yururi/internal/discordx"
+	"github.com/sigumaa/yururi/internal/xai"
 )
 
 func TestServerURL(t *testing.T) {
@@ -16,7 +19,7 @@ func TestServerURL(t *testing.T) {
 
 	workspaceDir := t.TempDir()
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, config.MCPToolPolicyConfig{})
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -30,7 +33,7 @@ func TestHandleGetCurrentTime(t *testing.T) {
 
 	workspaceDir := t.TempDir()
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, config.MCPToolPolicyConfig{})
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -60,7 +63,7 @@ func TestWorkspaceDocReadWrite(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, config.MCPToolPolicyConfig{})
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -134,7 +137,7 @@ func TestHandleGetCurrentTimeDeniedByPolicy(t *testing.T) {
 
 	workspaceDir := t.TempDir()
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, config.MCPToolPolicyConfig{
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{
 		DenyPatterns: []string{"get_current_*"},
 	})
 	if err != nil {
@@ -150,5 +153,62 @@ func TestHandleGetCurrentTimeDeniedByPolicy(t *testing.T) {
 		if !strings.Contains(err.Error(), "tool=get_current_time") {
 			t.Fatalf("handleGetCurrentTime() error missing tool name: %v", err)
 		}
+	}
+}
+
+func TestHandleXSearchSuccess(t *testing.T) {
+	t.Parallel()
+
+	xaiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp-x-1",
+			"model":"grok-4-1-fast-non-reasoning",
+			"output_text":"x search result",
+			"citations":[{"type":"url_citation","url":"https://x.com/openai/status/1","title":"OpenAI post"}]
+		}`))
+	}))
+	defer xaiServer.Close()
+
+	workspaceDir := t.TempDir()
+	xaiClient := xai.NewClient(xai.Config{
+		BaseURL:    xaiServer.URL,
+		APIKey:     "test-key",
+		Model:      "grok-4-1-fast-non-reasoning",
+		HTTPClient: xaiServer.Client(),
+	})
+
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, xaiClient, config.MCPToolPolicyConfig{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, got, err := srv.handleXSearch(context.Background(), nil, XSearchArgs{
+		Query: "today trend",
+	})
+	if err != nil {
+		t.Fatalf("handleXSearch() error = %v", err)
+	}
+	if got.Text != "x search result" {
+		t.Fatalf("Text = %q, want %q", got.Text, "x search result")
+	}
+	if got.ResponseID != "resp-x-1" {
+		t.Fatalf("ResponseID = %q, want %q", got.ResponseID, "resp-x-1")
+	}
+	if len(got.Citations) != 1 {
+		t.Fatalf("Citations len = %d, want 1", len(got.Citations))
+	}
+}
+
+func TestHandleXSearchDisabled(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, _, err := srv.handleXSearch(context.Background(), nil, XSearchArgs{Query: "test"}); err == nil {
+		t.Fatal("handleXSearch() error = nil, want disabled error")
 	}
 }

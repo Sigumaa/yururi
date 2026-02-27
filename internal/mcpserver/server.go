@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sigumaa/yururi/internal/config"
 	"github.com/sigumaa/yururi/internal/discordx"
+	"github.com/sigumaa/yururi/internal/xai"
 )
 
 type Server struct {
@@ -23,6 +24,7 @@ type Server struct {
 	workspaceDir    string
 	toolPolicy      toolPolicy
 	discord         *discordx.Gateway
+	xai             *xai.Client
 	mcpServer       *mcp.Server
 	httpServer      *http.Server
 	docMu           sync.Mutex
@@ -114,6 +116,23 @@ type CurrentTimeResult struct {
 	CurrentRFC3339 string `json:"current_rfc3339"`
 }
 
+type XSearchArgs struct {
+	Query                    string   `json:"query" jsonschema:"検索クエリ"`
+	AllowedXHandles          []string `json:"allowed_x_handles,omitempty" jsonschema:"検索対象に含めるXハンドル(任意)"`
+	ExcludedXHandles         []string `json:"excluded_x_handles,omitempty" jsonschema:"検索対象から除外するXハンドル(任意)"`
+	FromDate                 string   `json:"from_date,omitempty" jsonschema:"検索開始日(YYYY-MM-DD, 任意)"`
+	ToDate                   string   `json:"to_date,omitempty" jsonschema:"検索終了日(YYYY-MM-DD, 任意)"`
+	EnableImageUnderstanding bool     `json:"enable_image_understanding,omitempty" jsonschema:"画像理解を有効化(任意)"`
+	EnableVideoUnderstanding bool     `json:"enable_video_understanding,omitempty" jsonschema:"動画理解を有効化(任意)"`
+}
+
+type XSearchResult struct {
+	Text       string         `json:"text"`
+	Citations  []xai.Citation `json:"citations,omitempty"`
+	ResponseID string         `json:"response_id,omitempty"`
+	Model      string         `json:"model,omitempty"`
+}
+
 type WorkspaceDocArgs struct {
 	Name string `json:"name" jsonschema:"YURURI.md/SOUL.md/MEMORY.md/HEARTBEAT.md"`
 }
@@ -129,7 +148,7 @@ type WorkspaceDocResult struct {
 	Content string `json:"content"`
 }
 
-func New(bind string, defaultTimezone string, workspaceDir string, discord *discordx.Gateway, policyOverrides ...config.MCPToolPolicyConfig) (*Server, error) {
+func New(bind string, defaultTimezone string, workspaceDir string, discord *discordx.Gateway, xaiClient *xai.Client, policyOverrides ...config.MCPToolPolicyConfig) (*Server, error) {
 	bind = strings.TrimSpace(bind)
 	if bind == "" {
 		return nil, errors.New("mcp bind is required")
@@ -163,6 +182,7 @@ func New(bind string, defaultTimezone string, workspaceDir string, discord *disc
 		workspaceDir:    filepath.Clean(workspaceDir),
 		toolPolicy:      newToolPolicy(policyCfg),
 		discord:         discord,
+		xai:             xaiClient,
 		mcpServer:       m,
 	}
 	s.registerTools()
@@ -253,6 +273,13 @@ func (s *Server) registerTools() {
 		Name:        "get_current_time",
 		Description: "現在時刻を取得する",
 	}, s.handleGetCurrentTime)
+
+	if s.xai != nil {
+		mcp.AddTool(s.mcpServer, &mcp.Tool{
+			Name:        "x_search",
+			Description: "xAIのX SearchでX投稿を検索する",
+		}, s.handleXSearch)
+	}
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "read_workspace_doc",
@@ -386,6 +413,32 @@ func (s *Server) handleGetCurrentTime(_ context.Context, _ *mcp.CallToolRequest,
 		Timezone:       loc.String(),
 		CurrentUnix:    now.Unix(),
 		CurrentRFC3339: now.Format(time.RFC3339),
+	}, nil
+}
+
+func (s *Server) handleXSearch(ctx context.Context, _ *mcp.CallToolRequest, args XSearchArgs) (*mcp.CallToolResult, XSearchResult, error) {
+	if err := s.enforceToolPolicy("x_search"); err != nil {
+		return nil, XSearchResult{}, err
+	}
+	if s.xai == nil {
+		return nil, XSearchResult{}, errors.New("x_search is disabled")
+	}
+	result, err := s.xai.Query(ctx, args.Query, xai.SearchOptions{
+		AllowedXHandles:          args.AllowedXHandles,
+		ExcludedXHandles:         args.ExcludedXHandles,
+		FromDate:                 args.FromDate,
+		ToDate:                   args.ToDate,
+		EnableImageUnderstanding: args.EnableImageUnderstanding,
+		EnableVideoUnderstanding: args.EnableVideoUnderstanding,
+	})
+	if err != nil {
+		return nil, XSearchResult{}, err
+	}
+	return nil, XSearchResult{
+		Text:       result.Text,
+		Citations:  result.Citations,
+		ResponseID: result.ResponseID,
+		Model:      result.Model,
 	}, nil
 }
 

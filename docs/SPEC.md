@@ -27,6 +27,11 @@
    - `codex.home_dir`
    - `heartbeat.cron`（既定30分）
    - `heartbeat.timezone`
+   - `xai.enabled`
+   - `xai.api_key`
+   - `xai.base_url`（既定: `https://api.x.ai/v1`）
+   - `xai.model`（既定: `grok-4-1-fast-non-reasoning`）
+   - `xai.timeout_sec`
 2. 主要型:
    - `IncomingEvent`
    - `DecisionResult`（`noop|reply|react|send`）
@@ -56,6 +61,7 @@
    - `start_typing(channel_id, source, duration_sec?)`
 2. Utility tools:
    - `get_current_time(timezone?)`（未指定時`Asia/Tokyo`）
+   - `x_search(query, allowed_x_handles?, excluded_x_handles?, from_date?, to_date?, enable_image_understanding?, enable_video_understanding?)`
 3. Workspace doc tools:
    - `read_workspace_doc`
    - `append_workspace_doc`
@@ -104,6 +110,7 @@
 8. reply/react/send/typingの正常系。
 9. 会話本文が永続化されないこと。
 10. `codex --search app-server`起動失敗時のフォールト処理。
+11. `x_search` 呼び出し時の正常系・エラー系。
 
 ## 実装フェーズ
 1. Phase 1: 設定・Discord受信・Codex最小連携・`noop/reply`。
