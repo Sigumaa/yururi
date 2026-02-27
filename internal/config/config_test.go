@@ -35,9 +35,6 @@ codex:
 	if cfg.MCP.URL == "" {
 		t.Fatal("MCP.URL is empty")
 	}
-	if cfg.Memory.RootDir == "" {
-		t.Fatal("Memory.RootDir is empty")
-	}
 	if len(cfg.MCP.ToolPolicy.AllowPatterns) != 0 {
 		t.Fatalf("MCP.ToolPolicy.AllowPatterns = %v, want empty", cfg.MCP.ToolPolicy.AllowPatterns)
 	}
@@ -72,10 +69,9 @@ mcp:
 
 	t.Setenv("MCP_BIND", "127.0.0.1:44444")
 	t.Setenv("MCP_URL", "http://127.0.0.1:44444/mcp")
-	t.Setenv("MCP_TOOL_POLICY_ALLOW_PATTERNS", "memory_*, get_current_time")
-	t.Setenv("MCP_TOOL_POLICY_DENY_PATTERNS", "memory_upsert_*")
+	t.Setenv("MCP_TOOL_POLICY_ALLOW_PATTERNS", "read_*, get_current_time")
+	t.Setenv("MCP_TOOL_POLICY_DENY_PATTERNS", "replace_workspace_doc")
 	t.Setenv("HEARTBEAT_ENABLED", "false")
-	t.Setenv("MEMORY_ROOT_DIR", filepath.Join(dir, "memory"))
 
 	cfg, err := Load(cfgPath)
 	if err != nil {
@@ -87,24 +83,21 @@ mcp:
 	if cfg.MCP.URL != "http://127.0.0.1:44444/mcp" {
 		t.Fatalf("MCP.URL = %q", cfg.MCP.URL)
 	}
-	if got, want := cfg.MCP.ToolPolicy.AllowPatterns, []string{"memory_*", "get_current_time"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	if got, want := cfg.MCP.ToolPolicy.AllowPatterns, []string{"read_*", "get_current_time"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("MCP.ToolPolicy.AllowPatterns = %v, want %v", got, want)
 	}
-	if got, want := cfg.MCP.ToolPolicy.DenyPatterns, []string{"memory_upsert_*"}; len(got) != len(want) || got[0] != want[0] {
+	if got, want := cfg.MCP.ToolPolicy.DenyPatterns, []string{"replace_workspace_doc"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("MCP.ToolPolicy.DenyPatterns = %v, want %v", got, want)
 	}
 	if cfg.Heartbeat.Enabled {
 		t.Fatalf("Heartbeat.Enabled = true, want false")
 	}
-	if cfg.Memory.RootDir != filepath.Join(dir, "memory") {
-		t.Fatalf("Memory.RootDir = %q", cfg.Memory.RootDir)
-	}
 
 	current := CurrentMCPToolPolicy()
-	if got, want := current.AllowPatterns, []string{"memory_*", "get_current_time"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	if got, want := current.AllowPatterns, []string{"read_*", "get_current_time"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("CurrentMCPToolPolicy().AllowPatterns = %v, want %v", got, want)
 	}
-	if got, want := current.DenyPatterns, []string{"memory_upsert_*"}; len(got) != len(want) || got[0] != want[0] {
+	if got, want := current.DenyPatterns, []string{"replace_workspace_doc"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("CurrentMCPToolPolicy().DenyPatterns = %v, want %v", got, want)
 	}
 }

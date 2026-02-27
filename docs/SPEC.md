@@ -5,8 +5,8 @@
 2. 指定チャンネル投稿はメンション不要で処理候補にし、返信可否はAI判断に委ねる。
 3. Codex実行は`codex --search app-server --listen stdio://`を既定にし、Web検索を常時有効化する。
 4. Discord操作は内蔵MCP tool、Discord以外の独自util第一弾は`get_current_time(timezone?)`を追加する。
-5. 会話本文は永続化しない。AI自己判断でMarkdown知識（ユーザー/チャンネル/タスク）を更新する。
-6. 定期依頼は専用cronを持たず、heartbeat駆動で未処理タスクを実行する。
+5. 会話本文は永続化しない。AI自己判断で4軸Markdown（YURURI/SOUL/MEMORY/HEARTBEAT）を更新する。
+6. 定期実行はheartbeat駆動で行い、必要時のみ投稿する。
 
 ## 目的と成功基準
 1. 指定チャンネルのみで自然参加し、不要返信を増やさない。
@@ -27,17 +27,15 @@
    - `codex.home_dir`
    - `heartbeat.cron`（既定30分）
    - `heartbeat.timezone`
-   - `memory.root_dir`
 2. 主要型:
    - `IncomingEvent`
    - `DecisionResult`（`noop|reply|react|send`）
-   - `MemoryNote`
-   - `RecurringTask`
-   - `ChannelIntentProfile`
+   - `ChannelSessionState`
+   - `MCPToolCall`
 3. 主要IF:
    - `AiRuntime.RunTurn(ctx, input) (output, err)`
    - `DiscordGateway`（send/reply/react/typing/history）
-   - `MemoryStore`（upsert/query/listDueTasks）
+   - `SessionCoordinator`（channelごとのthread/turn継続管理）
 
 ## アーキテクチャ
 1. `cmd/yururi/main.go`で設定読込・依存配線・起動。
@@ -47,7 +45,7 @@
 5. `internal/ai/codex`でapp-server JSON-RPC制御。
 6. `internal/mcp/server`でtoolを登録しCodexから呼ばせる。
 7. `internal/heartbeat`で定期実行しタスク処理。
-8. `internal/memory/markdown`で知識をファイル更新。
+8. `workspace`配下の4軸Markdownをtool経由で更新する。
 
 ## Tool設計（MCP）
 1. Discord tools:
@@ -58,18 +56,17 @@
    - `start_typing(channel_id, source, duration_sec?)`
 2. Utility tools:
    - `get_current_time(timezone?)`（未指定時`Asia/Tokyo`）
-3. Memory tools:
-   - `memory_upsert_user_note`
-   - `memory_upsert_channel_intent`
-   - `memory_upsert_task`
-   - `memory_query`
+3. Workspace doc tools:
+   - `read_workspace_doc`
+   - `append_workspace_doc`
+   - `replace_workspace_doc`
 4. `read_message_history`は複数回呼び出し前提で実装する。
 
 ## 永続メモリ（Markdown）
-1. `workspace/memory/users/<user_id>.md`
-2. `workspace/memory/channels/<channel_id>.md`
-3. `workspace/memory/tasks/<task_id>.md`
-4. `workspace/memory/index.md`
+1. `workspace/YURURI.md`
+2. `workspace/SOUL.md`
+3. `workspace/MEMORY.md`
+4. `workspace/HEARTBEAT.md`
 5. 保存対象は抽出知識のみ。会話本文は保存しない。
 6. 更新はAI自己判断、矛盾時は新情報で上書きする。
 
@@ -87,7 +84,7 @@
 5. 必要に応じてMCP tool呼び出し。
 6. 最終`DecisionResult`反映。
 7. typing停止・メタログ出力。
-8. heartbeat時は`tasks`を評価して到来分を実行。
+8. heartbeat時は`HEARTBEAT.md`の指示に従って必要時のみ行動する。
 
 ## 制約と運用ルール
 1. 指定チャンネル外では動作しない。
@@ -100,8 +97,8 @@
 1. フィルタ判定（guild/channel/exclude/allowed_bot）。
 2. ownerトーン分岐。
 3. `get_current_time`のtimezone解決。
-4. Markdown upsertの新規/更新/矛盾上書き。
-5. task抽出・next_run計算・heartbeat実行。
+4. 4軸Markdown更新（read/append/replace）の正常系。
+5. heartbeat実行時に不要投稿しないこと。
 6. `read_message_history`複数回呼び出し。
 7. `noop`時にDiscord投稿しないこと。
 8. reply/react/send/typingの正常系。
@@ -111,8 +108,8 @@
 ## 実装フェーズ
 1. Phase 1: 設定・Discord受信・Codex最小連携・`noop/reply`。
 2. Phase 2: Discord MCP tools一式。
-3. Phase 3: Markdown MemoryStoreとAI更新導線。
-4. Phase 4: heartbeat駆動タスク実行。
+3. Phase 3: 4軸Markdown更新導線。
+4. Phase 4: heartbeat駆動実行。
 5. Phase 5: utility tool（時刻）追加とテスト拡充。
 
 ## 明示前提

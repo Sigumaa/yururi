@@ -15,7 +15,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sigumaa/yururi/internal/config"
 	"github.com/sigumaa/yururi/internal/discordx"
-	"github.com/sigumaa/yururi/internal/memory"
 )
 
 type Server struct {
@@ -24,7 +23,6 @@ type Server struct {
 	workspaceDir    string
 	toolPolicy      toolPolicy
 	discord         *discordx.Gateway
-	memory          *memory.Store
 	mcpServer       *mcp.Server
 	httpServer      *http.Server
 	docMu           sync.Mutex
@@ -116,52 +114,6 @@ type CurrentTimeResult struct {
 	CurrentRFC3339 string `json:"current_rfc3339"`
 }
 
-type MemoryUpsertUserNoteArgs struct {
-	UserID string `json:"user_id" jsonschema:"対象ユーザーID"`
-	Note   string `json:"note" jsonschema:"記録する内容"`
-	Source string `json:"source,omitempty" jsonschema:"情報源(任意)"`
-}
-
-type MemoryUpsertChannelIntentArgs struct {
-	ChannelID string `json:"channel_id" jsonschema:"対象チャンネルID"`
-	Intent    string `json:"intent" jsonschema:"チャンネル趣旨"`
-	Policy    string `json:"policy,omitempty" jsonschema:"応答ポリシー(任意)"`
-}
-
-type MemoryUpsertTaskArgs struct {
-	TaskID       string `json:"task_id" jsonschema:"タスクID"`
-	Title        string `json:"title" jsonschema:"タスク名"`
-	Instructions string `json:"instructions" jsonschema:"タスク内容"`
-	ChannelID    string `json:"channel_id,omitempty" jsonschema:"投稿先チャンネルID(任意)"`
-	Schedule     string `json:"schedule,omitempty" jsonschema:"daily/hourly/every 6hなど"`
-	NextRunAt    string `json:"next_run_at,omitempty" jsonschema:"次回実行時刻(RFC3339)"`
-	Status       string `json:"status,omitempty" jsonschema:"active/doneなど"`
-}
-
-type MemoryQueryArgs struct {
-	Keyword string `json:"keyword" jsonschema:"検索語"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"最大件数"`
-}
-
-type MemoryPathResult struct {
-	Path string `json:"path"`
-}
-
-type MemoryTaskResult struct {
-	TaskID    string `json:"task_id"`
-	Status    string `json:"status"`
-	NextRunAt string `json:"next_run_at,omitempty"`
-}
-
-type MemoryQueryResult struct {
-	Matches []MemoryMatch `json:"matches"`
-}
-
-type MemoryMatch struct {
-	Path    string `json:"path"`
-	Excerpt string `json:"excerpt"`
-}
-
 type WorkspaceDocArgs struct {
 	Name string `json:"name" jsonschema:"YURURI.md/SOUL.md/MEMORY.md/HEARTBEAT.md"`
 }
@@ -177,7 +129,7 @@ type WorkspaceDocResult struct {
 	Content string `json:"content"`
 }
 
-func New(bind string, defaultTimezone string, workspaceDir string, discord *discordx.Gateway, store *memory.Store, policyOverrides ...config.MCPToolPolicyConfig) (*Server, error) {
+func New(bind string, defaultTimezone string, workspaceDir string, discord *discordx.Gateway, policyOverrides ...config.MCPToolPolicyConfig) (*Server, error) {
 	bind = strings.TrimSpace(bind)
 	if bind == "" {
 		return nil, errors.New("mcp bind is required")
@@ -191,9 +143,6 @@ func New(bind string, defaultTimezone string, workspaceDir string, discord *disc
 	}
 	if discord == nil {
 		return nil, errors.New("discord gateway is required")
-	}
-	if store == nil {
-		return nil, errors.New("memory store is required")
 	}
 	if strings.TrimSpace(defaultTimezone) == "" {
 		defaultTimezone = "Asia/Tokyo"
@@ -214,7 +163,6 @@ func New(bind string, defaultTimezone string, workspaceDir string, discord *disc
 		workspaceDir:    filepath.Clean(workspaceDir),
 		toolPolicy:      newToolPolicy(policyCfg),
 		discord:         discord,
-		memory:          store,
 		mcpServer:       m,
 	}
 	s.registerTools()
@@ -305,26 +253,6 @@ func (s *Server) registerTools() {
 		Name:        "get_current_time",
 		Description: "現在時刻を取得する",
 	}, s.handleGetCurrentTime)
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "memory_upsert_user_note",
-		Description: "ユーザーに関する記憶を更新する",
-	}, s.handleMemoryUpsertUserNote)
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "memory_upsert_channel_intent",
-		Description: "チャンネルの趣旨メモを更新する",
-	}, s.handleMemoryUpsertChannelIntent)
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "memory_upsert_task",
-		Description: "定期タスク/単発タスクを登録または更新する",
-	}, s.handleMemoryUpsertTask)
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "memory_query",
-		Description: "永続メモをキーワード検索する",
-	}, s.handleMemoryQuery)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "read_workspace_doc",
@@ -459,82 +387,6 @@ func (s *Server) handleGetCurrentTime(_ context.Context, _ *mcp.CallToolRequest,
 		CurrentUnix:    now.Unix(),
 		CurrentRFC3339: now.Format(time.RFC3339),
 	}, nil
-}
-
-func (s *Server) handleMemoryUpsertUserNote(ctx context.Context, _ *mcp.CallToolRequest, args MemoryUpsertUserNoteArgs) (*mcp.CallToolResult, MemoryPathResult, error) {
-	if err := s.enforceToolPolicy("memory_upsert_user_note"); err != nil {
-		return nil, MemoryPathResult{}, err
-	}
-	path, err := s.memory.UpsertUserNote(ctx, memory.UserNoteInput{
-		UserID: args.UserID,
-		Note:   args.Note,
-		Source: args.Source,
-	})
-	if err != nil {
-		return nil, MemoryPathResult{}, err
-	}
-	return nil, MemoryPathResult{Path: path}, nil
-}
-
-func (s *Server) handleMemoryUpsertChannelIntent(ctx context.Context, _ *mcp.CallToolRequest, args MemoryUpsertChannelIntentArgs) (*mcp.CallToolResult, MemoryPathResult, error) {
-	if err := s.enforceToolPolicy("memory_upsert_channel_intent"); err != nil {
-		return nil, MemoryPathResult{}, err
-	}
-	path, err := s.memory.UpsertChannelIntent(ctx, memory.ChannelIntentInput{
-		ChannelID: args.ChannelID,
-		Intent:    args.Intent,
-		Policy:    args.Policy,
-	})
-	if err != nil {
-		return nil, MemoryPathResult{}, err
-	}
-	return nil, MemoryPathResult{Path: path}, nil
-}
-
-func (s *Server) handleMemoryUpsertTask(ctx context.Context, _ *mcp.CallToolRequest, args MemoryUpsertTaskArgs) (*mcp.CallToolResult, MemoryTaskResult, error) {
-	if err := s.enforceToolPolicy("memory_upsert_task"); err != nil {
-		return nil, MemoryTaskResult{}, err
-	}
-	var next time.Time
-	if raw := strings.TrimSpace(args.NextRunAt); raw != "" {
-		parsed, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			return nil, MemoryTaskResult{}, fmt.Errorf("next_run_at must be RFC3339: %w", err)
-		}
-		next = parsed
-	}
-	task, err := s.memory.UpsertTask(ctx, memory.UpsertTaskInput{
-		TaskID:       args.TaskID,
-		Title:        args.Title,
-		Instructions: args.Instructions,
-		ChannelID:    args.ChannelID,
-		Schedule:     args.Schedule,
-		NextRunAt:    next,
-		Status:       args.Status,
-	})
-	if err != nil {
-		return nil, MemoryTaskResult{}, err
-	}
-	result := MemoryTaskResult{TaskID: task.TaskID, Status: task.Status}
-	if !task.NextRunAt.IsZero() {
-		result.NextRunAt = task.NextRunAt.UTC().Format(time.RFC3339)
-	}
-	return nil, result, nil
-}
-
-func (s *Server) handleMemoryQuery(ctx context.Context, _ *mcp.CallToolRequest, args MemoryQueryArgs) (*mcp.CallToolResult, MemoryQueryResult, error) {
-	if err := s.enforceToolPolicy("memory_query"); err != nil {
-		return nil, MemoryQueryResult{}, err
-	}
-	results, err := s.memory.Query(ctx, memory.QueryInput{Keyword: args.Keyword, Limit: args.Limit})
-	if err != nil {
-		return nil, MemoryQueryResult{}, err
-	}
-	matches := make([]MemoryMatch, 0, len(results))
-	for _, r := range results {
-		matches = append(matches, MemoryMatch{Path: r.Path, Excerpt: r.Excerpt})
-	}
-	return nil, MemoryQueryResult{Matches: matches}, nil
 }
 
 func (s *Server) handleReadWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {

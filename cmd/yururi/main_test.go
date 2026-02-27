@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/sigumaa/yururi/internal/codex"
 	"github.com/sigumaa/yururi/internal/config"
-	"github.com/sigumaa/yururi/internal/memory"
 	"github.com/sigumaa/yururi/internal/prompt"
 )
 
@@ -37,162 +37,100 @@ func TestCalculateHistoryLimit(t *testing.T) {
 	}
 }
 
-func TestRunHeartbeatTurnUsesCoordinatorForChannelTasks(t *testing.T) {
+func TestRunHeartbeatTurnCallsRuntime(t *testing.T) {
 	t.Parallel()
 
 	workspaceDir := t.TempDir()
 	if err := prompt.EnsureWorkspaceInstructionFiles(workspaceDir); err != nil {
 		t.Fatalf("EnsureWorkspaceInstructionFiles() error = %v", err)
 	}
-	store, err := memory.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	_, err = store.UpsertTask(context.Background(), memory.UpsertTaskInput{
-		TaskID:       "task-1",
-		Title:        "task 1",
-		Instructions: "do something",
-		ChannelID:    "c1",
-	})
-	if err != nil {
-		t.Fatalf("UpsertTask(task-1) error = %v", err)
-	}
-	_, err = store.UpsertTask(context.Background(), memory.UpsertTaskInput{
-		TaskID:       "task-2",
-		Title:        "task 2",
-		Instructions: "do something else",
-		ChannelID:    "c2",
-	})
-	if err != nil {
-		t.Fatalf("UpsertTask(task-2) error = %v", err)
-	}
-
 	cfg := config.Config{
-		Discord: config.DiscordConfig{GuildID: "g1"},
-		Codex:   config.CodexConfig{WorkspaceDir: workspaceDir},
+		Codex: config.CodexConfig{WorkspaceDir: workspaceDir},
 	}
-	coordinator := &heartbeatCoordinatorStub{}
-	runtime := &heartbeatFallbackRuntimeStub{}
+	runtime := &heartbeatRuntimeStub{}
 
-	if err := runHeartbeatTurn(context.Background(), cfg, coordinator, runtime, store, "hb-1"); err != nil {
+	if err := runHeartbeatTurn(context.Background(), cfg, runtime, "hb-test"); err != nil {
 		t.Fatalf("runHeartbeatTurn() error = %v", err)
-	}
-
-	if got := len(coordinator.calls); got != 2 {
-		t.Fatalf("coordinator calls = %d, want 2", got)
-	}
-	if coordinator.calls[0].ChannelKey != "g1:c1" {
-		t.Fatalf("first channel key = %q, want g1:c1", coordinator.calls[0].ChannelKey)
-	}
-	if coordinator.calls[1].ChannelKey != "g1:c2" {
-		t.Fatalf("second channel key = %q, want g1:c2", coordinator.calls[1].ChannelKey)
-	}
-	if got := len(runtime.calls); got != 0 {
-		t.Fatalf("fallback runtime calls = %d, want 0", got)
-	}
-}
-
-func TestRunHeartbeatTurnFallbackWhenNoTasks(t *testing.T) {
-	t.Parallel()
-
-	workspaceDir := t.TempDir()
-	if err := prompt.EnsureWorkspaceInstructionFiles(workspaceDir); err != nil {
-		t.Fatalf("EnsureWorkspaceInstructionFiles() error = %v", err)
-	}
-	store, err := memory.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-
-	cfg := config.Config{
-		Discord: config.DiscordConfig{GuildID: "g1"},
-		Codex:   config.CodexConfig{WorkspaceDir: workspaceDir},
-	}
-	coordinator := &heartbeatCoordinatorStub{}
-	runtime := &heartbeatFallbackRuntimeStub{}
-
-	if err := runHeartbeatTurn(context.Background(), cfg, coordinator, runtime, store, "hb-2"); err != nil {
-		t.Fatalf("runHeartbeatTurn() error = %v", err)
-	}
-
-	if got := len(coordinator.calls); got != 0 {
-		t.Fatalf("coordinator calls = %d, want 0", got)
 	}
 	if got := len(runtime.calls); got != 1 {
-		t.Fatalf("fallback runtime calls = %d, want 1", got)
+		t.Fatalf("runtime RunTurn calls = %d, want 1", got)
+	}
+	if !strings.Contains(runtime.calls[0].UserPrompt, "## due tasks") {
+		t.Fatalf("heartbeat prompt missing due tasks section: %q", runtime.calls[0].UserPrompt)
 	}
 }
 
-func TestRunHeartbeatTurnFallbackForUnboundTask(t *testing.T) {
+func TestShouldRecoverDiscordDelivery(t *testing.T) {
 	t.Parallel()
 
-	workspaceDir := t.TempDir()
-	if err := prompt.EnsureWorkspaceInstructionFiles(workspaceDir); err != nil {
-		t.Fatalf("EnsureWorkspaceInstructionFiles() error = %v", err)
-	}
-	store, err := memory.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	_, err = store.UpsertTask(context.Background(), memory.UpsertTaskInput{
-		TaskID:       "task-free",
-		Title:        "task free",
-		Instructions: "do generic check",
-		ChannelID:    "",
-	})
-	if err != nil {
-		t.Fatalf("UpsertTask(task-free) error = %v", err)
+	tests := []struct {
+		name   string
+		input  codex.TurnResult
+		expect bool
+	}{
+		{
+			name:   "no assistant text",
+			input:  codex.TurnResult{AssistantText: "", ToolCalls: nil},
+			expect: false,
+		},
+		{
+			name:   "assistant text without action tool",
+			input:  codex.TurnResult{AssistantText: "こんにちは", ToolCalls: nil},
+			expect: true,
+		},
+		{
+			name: "assistant text with reply tool",
+			input: codex.TurnResult{
+				AssistantText: "こんにちは",
+				ToolCalls: []codex.MCPToolCall{
+					{Tool: "reply_message", Status: "completed"},
+				},
+			},
+			expect: false,
+		},
+		{
+			name:   "assistant text with error detail",
+			input:  codex.TurnResult{AssistantText: "こんにちは", ErrorMessage: "failed"},
+			expect: false,
+		},
 	}
 
-	cfg := config.Config{
-		Discord: config.DiscordConfig{GuildID: "g1"},
-		Codex:   config.CodexConfig{WorkspaceDir: workspaceDir},
-	}
-	coordinator := &heartbeatCoordinatorStub{}
-	runtime := &heartbeatFallbackRuntimeStub{}
-
-	if err := runHeartbeatTurn(context.Background(), cfg, coordinator, runtime, store, "hb-3"); err != nil {
-		t.Fatalf("runHeartbeatTurn() error = %v", err)
-	}
-
-	if got := len(coordinator.calls); got != 0 {
-		t.Fatalf("coordinator calls = %d, want 0", got)
-	}
-	if got := len(runtime.calls); got != 1 {
-		t.Fatalf("fallback runtime calls = %d, want 1", got)
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := shouldRecoverDiscordDelivery(tc.input)
+			if got != tc.expect {
+				t.Fatalf("shouldRecoverDiscordDelivery() = %v, want %v", got, tc.expect)
+			}
+		})
 	}
 }
 
-type heartbeatCoordinatorCall struct {
-	ChannelKey string
-	Input      codex.TurnInput
+func TestBuildDeliveryRecoveryPrompt(t *testing.T) {
+	t.Parallel()
+
+	got := buildDeliveryRecoveryPrompt("c1", "m1", "返信案")
+	if !strings.Contains(got, "対象チャンネルID: c1") {
+		t.Fatalf("recovery prompt missing channel id: %q", got)
+	}
+	if !strings.Contains(got, "対象メッセージID: m1") {
+		t.Fatalf("recovery prompt missing message id: %q", got)
+	}
+	if !strings.Contains(got, "reply_message") || !strings.Contains(got, "send_message") {
+		t.Fatalf("recovery prompt missing delivery tool instruction: %q", got)
+	}
 }
 
-type heartbeatCoordinatorStub struct {
-	calls []heartbeatCoordinatorCall
-}
-
-func (s *heartbeatCoordinatorStub) RunMessageTurn(_ context.Context, channelKey string, input codex.TurnInput) (codex.TurnResult, error) {
-	s.calls = append(s.calls, heartbeatCoordinatorCall{
-		ChannelKey: channelKey,
-		Input:      input,
-	})
-	return codex.TurnResult{
-		ThreadID: "thread-test",
-		TurnID:   "turn-test",
-		Status:   "completed",
-	}, nil
-}
-
-type heartbeatFallbackRuntimeStub struct {
+type heartbeatRuntimeStub struct {
 	calls []codex.TurnInput
 }
 
-func (s *heartbeatFallbackRuntimeStub) RunTurn(_ context.Context, input codex.TurnInput) (codex.TurnResult, error) {
+func (s *heartbeatRuntimeStub) RunTurn(_ context.Context, input codex.TurnInput) (codex.TurnResult, error) {
 	s.calls = append(s.calls, input)
 	return codex.TurnResult{
-		ThreadID: "thread-fallback",
-		TurnID:   "turn-fallback",
+		ThreadID: "thread-test",
+		TurnID:   "turn-test",
 		Status:   "completed",
 	}, nil
 }

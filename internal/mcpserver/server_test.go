@@ -9,19 +9,14 @@ import (
 
 	"github.com/sigumaa/yururi/internal/config"
 	"github.com/sigumaa/yururi/internal/discordx"
-	"github.com/sigumaa/yururi/internal/memory"
 )
 
 func TestServerURL(t *testing.T) {
 	t.Parallel()
 
-	store, err := memory.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	workspaceDir := t.TempDir()
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, store, config.MCPToolPolicyConfig{})
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, config.MCPToolPolicyConfig{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -33,13 +28,9 @@ func TestServerURL(t *testing.T) {
 func TestHandleGetCurrentTime(t *testing.T) {
 	t.Parallel()
 
-	store, err := memory.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	workspaceDir := t.TempDir()
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, store, config.MCPToolPolicyConfig{})
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, config.MCPToolPolicyConfig{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -63,17 +54,13 @@ func TestHandleGetCurrentTime(t *testing.T) {
 func TestWorkspaceDocReadWrite(t *testing.T) {
 	t.Parallel()
 
-	store, err := memory.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	workspaceDir := t.TempDir()
 	seedPath := workspaceDir + "/MEMORY.md"
 	if err := os.WriteFile(seedPath, []byte("# MEMORY.md\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, store, config.MCPToolPolicyConfig{})
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, config.MCPToolPolicyConfig{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -98,21 +85,21 @@ func TestToolPolicyEvaluateDenyPrecedence(t *testing.T) {
 	t.Parallel()
 
 	policy := newToolPolicy(config.MCPToolPolicyConfig{
-		AllowPatterns: []string{"memory_*"},
-		DenyPatterns:  []string{"memory_upsert_*"},
+		AllowPatterns: []string{"read_*"},
+		DenyPatterns:  []string{"read_workspace_doc"},
 	})
 
-	allowed, reason := policy.evaluate("memory_upsert_task")
+	allowed, reason := policy.evaluate("read_workspace_doc")
 	if allowed {
-		t.Fatal("policy.evaluate(memory_upsert_task) = allowed, want denied")
+		t.Fatal("policy.evaluate(read_workspace_doc) = allowed, want denied")
 	}
-	if !strings.Contains(reason, `matched deny pattern "memory_upsert_*"`) {
+	if !strings.Contains(reason, `matched deny pattern "read_workspace_doc"`) {
 		t.Fatalf("deny reason = %q", reason)
 	}
 
-	allowed, reason = policy.evaluate("memory_query")
+	allowed, reason = policy.evaluate("read_message_history")
 	if !allowed {
-		t.Fatalf("policy.evaluate(memory_query) denied, reason=%q", reason)
+		t.Fatalf("policy.evaluate(read_message_history) denied, reason=%q", reason)
 	}
 }
 
@@ -133,25 +120,21 @@ func TestToolPolicyEvaluateWildcardCaseInsensitive(t *testing.T) {
 		t.Fatalf("policy.evaluate(Get_Current_Time) denied, reason=%q", reason)
 	}
 
-	allowed, reason = policy.evaluate("memory_query")
+	allowed, reason = policy.evaluate("send_message")
 	if allowed {
-		t.Fatalf("policy.evaluate(memory_query) = allowed, want denied")
+		t.Fatalf("policy.evaluate(send_message) = allowed, want denied")
 	}
 	if reason != "not matched by allow patterns" {
-		t.Fatalf("policy.evaluate(memory_query) reason = %q", reason)
+		t.Fatalf("policy.evaluate(send_message) reason = %q", reason)
 	}
 }
 
 func TestHandleGetCurrentTimeDeniedByPolicy(t *testing.T) {
 	t.Parallel()
 
-	store, err := memory.NewStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
 	workspaceDir := t.TempDir()
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, store, config.MCPToolPolicyConfig{
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, config.MCPToolPolicyConfig{
 		DenyPatterns: []string{"get_current_*"},
 	})
 	if err != nil {

@@ -9,7 +9,7 @@
 1. 毎ターン`thread/start`しており、チャンネル会話の文脈が途切れやすい。
 2. `turn/steer`が未導入で、連続投稿時の追記制御が弱い。
 3. セッション制御は`dispatcher`のみで、AIターン状態を持つ調停層がない。
-4. Memoryが`runtime/memory`と4軸Markdownで分かれており、責務が曖昧。
+4. 永続記憶を4軸Markdownへ統一する前提が不十分で、責務が曖昧。
 5. ツール実行ポリシーと観測項目が最小で、運用時の原因追跡が難しい。
 
 ## ターゲットアーキテクチャ
@@ -17,7 +17,7 @@
 2. セッション状態として`thread_id`、`active_turn_id`、`phase`、`last_activity`を保持する。
 3. 初回は`thread/start -> turn/start`、継続は`turn/steer`優先、失敗時は`turn/start`へフォールバックする。
 4. Discordイベント処理は「受信→フィルタ→セッションキュー→コンテキスト構築→Codex実行→tool結果反映→ログ記録」に固定する。
-5. 4軸Markdown(`YURURI.md/SOUL.md/MEMORY.md/HEARTBEAT.md`)を主記憶とし、`runtime/memory/tasks`はスケジュール実行用途に限定する。
+5. 4軸Markdown(`YURURI.md/SOUL.md/MEMORY.md/HEARTBEAT.md`)のみを永続記憶として扱う。
 6. MCP toolは`allow/deny`プロファイルで制御し、危険操作は既定拒否とする。
 7. 構造化ログに`session_key`、`run_id`、`thread_id`、`turn_id`、`queue_wait_ms`、`turn_latency_ms`、`tool_calls`を必ず出す。
 
@@ -38,8 +38,8 @@
    - 実行IDと各種レイテンシ計測を追加し、ボトルネックを追えるようにする。
    - 完了条件: 1ターンの待機時間と実行時間をログで追跡できる。
 6. R6 自律運用仕上げ
-   - heartbeatとタスク実行をセッション制御と統合し、重複実行を防ぐ。
-   - 完了条件: heartbeat競合時も同一タスクが二重実行されない。
+   - heartbeat実行を安定化し、必要時のみ投稿する。
+   - 完了条件: heartbeat競合時でも不要な重複投稿が発生しない。
 
 ## 参照方針
 1. `luna-chat`はセッション調停と`turn/steer`運用を参考にする。

@@ -2,12 +2,10 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"os/signal"
-	"sort"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -20,17 +18,12 @@ import (
 	"github.com/sigumaa/yururi/internal/dispatch"
 	"github.com/sigumaa/yururi/internal/heartbeat"
 	"github.com/sigumaa/yururi/internal/mcpserver"
-	"github.com/sigumaa/yururi/internal/memory"
 	"github.com/sigumaa/yururi/internal/orchestrator"
 	"github.com/sigumaa/yururi/internal/policy"
 	"github.com/sigumaa/yururi/internal/prompt"
 )
 
-type messageTurnRunner interface {
-	RunMessageTurn(ctx context.Context, channelKey string, input codex.TurnInput) (codex.TurnResult, error)
-}
-
-type fallbackTurnRunner interface {
+type heartbeatRuntime interface {
 	RunTurn(ctx context.Context, input codex.TurnInput) (codex.TurnResult, error)
 }
 
@@ -47,11 +40,6 @@ func main() {
 		log.Fatalf("prepare workspace instruction files: %v", err)
 	}
 
-	memoryStore, err := memory.NewStore(cfg.Memory.RootDir)
-	if err != nil {
-		log.Fatalf("init memory store: %v", err)
-	}
-
 	discord, err := discordgo.New("Bot " + cfg.Discord.Token)
 	if err != nil {
 		log.Fatalf("create discord session: %v", err)
@@ -59,7 +47,7 @@ func main() {
 	discord.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsMessageContent
 
 	gateway := discordx.NewGateway(discord, cfg.Discord)
-	mcpSrv, err := mcpserver.New(cfg.MCP.Bind, cfg.Heartbeat.Timezone, cfg.Codex.WorkspaceDir, gateway, memoryStore)
+	mcpSrv, err := mcpserver.New(cfg.MCP.Bind, cfg.Heartbeat.Timezone, cfg.Codex.WorkspaceDir, gateway)
 	if err != nil {
 		log.Fatalf("create mcp server: %v", err)
 	}
@@ -100,7 +88,7 @@ func main() {
 
 	if cfg.Heartbeat.Enabled {
 		runner, err := heartbeat.NewRunner(cfg.Heartbeat.Cron, cfg.Heartbeat.Timezone, func(runCtx context.Context) error {
-			return runHeartbeatTurn(runCtx, cfg, coordinator, aiClient, memoryStore, nextRunID(&runSeq, "hb"))
+			return runHeartbeatTurn(runCtx, cfg, aiClient, nextRunID(&runSeq, "hb"))
 		})
 		if err != nil {
 			log.Fatalf("init heartbeat runner: %v", err)
@@ -108,7 +96,7 @@ func main() {
 		runner.Start(ctx)
 	}
 
-	log.Printf("yururi started: mcp_url=%s memory_root=%s model=%s reasoning=%s", cfg.MCP.URL, cfg.Memory.RootDir, cfg.Codex.Model, cfg.Codex.ReasoningEffort)
+	log.Printf("yururi started: mcp_url=%s model=%s reasoning=%s", cfg.MCP.URL, cfg.Codex.Model, cfg.Codex.ReasoningEffort)
 
 	select {
 	case <-ctx.Done():
@@ -200,96 +188,49 @@ func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orch
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=codex_turn_error_detail run_id=%s message=%s err=%s", runID, m.ID, result.ErrorMessage)
 	}
+	if shouldRecoverDiscordDelivery(result) {
+		recoveryRunID := runID + "-deliver"
+		log.Printf("event=discord_delivery_recovery_started run_id=%s message=%s channel=%s thread=%s turn=%s", recoveryRunID, m.ID, m.ChannelID, result.ThreadID, result.TurnID)
+		recoveryStarted := time.Now()
+		recoveryResult, recoveryErr := coordinator.RunMessageTurn(ctx, channelKey, codex.TurnInput{
+			BaseInstructions:      bundle.BaseInstructions,
+			DeveloperInstructions: bundle.DeveloperInstructions,
+			UserPrompt:            buildDeliveryRecoveryPrompt(m.ChannelID, m.ID, result.AssistantText),
+		})
+		if recoveryErr != nil {
+			log.Printf("event=discord_delivery_recovery_failed run_id=%s message=%s channel=%s turn_latency_ms=%d err=%v", recoveryRunID, m.ID, m.ChannelID, durationMS(time.Since(recoveryStarted)), recoveryErr)
+			return
+		}
+		log.Printf("event=discord_delivery_recovery_completed run_id=%s message=%s channel=%s status=%s thread=%s turn=%s tool_calls=%d turn_latency_ms=%d", recoveryRunID, m.ID, m.ChannelID, recoveryResult.Status, recoveryResult.ThreadID, recoveryResult.TurnID, len(recoveryResult.ToolCalls), durationMS(time.Since(recoveryStarted)))
+		if strings.TrimSpace(recoveryResult.ErrorMessage) != "" {
+			log.Printf("event=discord_delivery_recovery_error_detail run_id=%s message=%s err=%s", recoveryRunID, m.ID, recoveryResult.ErrorMessage)
+		}
+	}
 }
 
-func runHeartbeatTurn(ctx context.Context, cfg config.Config, coordinator messageTurnRunner, runtime fallbackTurnRunner, memoryStore *memory.Store, runID string) error {
+func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatRuntime, runID string) error {
 	started := time.Now()
-	dueTasks, err := memoryStore.ClaimDueTasks(ctx, time.Now().UTC(), 20)
-	if err != nil {
-		return err
-	}
-	log.Printf("event=heartbeat_tick run_id=%s due_tasks=%d", runID, len(dueTasks))
-
-	taskItems := make([]prompt.HeartbeatTask, 0, len(dueTasks))
-	for _, task := range dueTasks {
-		taskItems = append(taskItems, prompt.HeartbeatTask{
-			TaskID:       task.TaskID,
-			Title:        task.Title,
-			Instructions: task.Instructions,
-			ChannelID:    task.ChannelID,
-			Schedule:     task.Schedule,
-		})
-	}
+	log.Printf("event=heartbeat_tick run_id=%s", runID)
 
 	instructions, err := prompt.LoadWorkspaceInstructions(cfg.Codex.WorkspaceDir)
 	if err != nil {
 		return err
 	}
-
-	byChannel := map[string][]prompt.HeartbeatTask{}
-	fallbackTasks := make([]prompt.HeartbeatTask, 0, len(taskItems))
-	for _, task := range taskItems {
-		channelID := strings.TrimSpace(task.ChannelID)
-		if channelID == "" {
-			fallbackTasks = append(fallbackTasks, task)
-			continue
-		}
-		byChannel[channelID] = append(byChannel[channelID], task)
+	bundle := prompt.BuildHeartbeatBundle(instructions, prompt.HeartbeatInput{})
+	result, err := runtime.RunTurn(ctx, codex.TurnInput{
+		BaseInstructions:      bundle.BaseInstructions,
+		DeveloperInstructions: bundle.DeveloperInstructions,
+		UserPrompt:            bundle.UserPrompt,
+	})
+	if err != nil {
+		log.Printf("event=heartbeat_turn_failed run_id=%s turn_latency_ms=%d err=%v", runID, durationMS(time.Since(started)), err)
+		return err
 	}
-
-	var runErrs []error
-	channelIDs := make([]string, 0, len(byChannel))
-	for channelID := range byChannel {
-		channelIDs = append(channelIDs, channelID)
+	log.Printf("event=heartbeat_turn_completed run_id=%s status=%s thread=%s turn=%s tool_calls=%d turn_latency_ms=%d", runID, result.Status, result.ThreadID, result.TurnID, len(result.ToolCalls), durationMS(time.Since(started)))
+	if strings.TrimSpace(result.ErrorMessage) != "" {
+		log.Printf("event=heartbeat_turn_error_detail run_id=%s err=%s", runID, result.ErrorMessage)
 	}
-	sort.Strings(channelIDs)
-
-	for index, channelID := range channelIDs {
-		channelRunID := fmt.Sprintf("%s-c%d", runID, index+1)
-		taskSet := byChannel[channelID]
-		bundle := prompt.BuildHeartbeatBundle(instructions, prompt.HeartbeatInput{
-			DueTasks: taskSet,
-		})
-		channelKey := orchestrator.ChannelKey(cfg.Discord.GuildID, channelID)
-		result, err := coordinator.RunMessageTurn(ctx, channelKey, codex.TurnInput{
-			BaseInstructions:      bundle.BaseInstructions,
-			DeveloperInstructions: bundle.DeveloperInstructions,
-			UserPrompt:            bundle.UserPrompt,
-		})
-		if err != nil {
-			runErrs = append(runErrs, fmt.Errorf("channel %s heartbeat turn: %w", channelID, err))
-			log.Printf("event=heartbeat_turn_failed run_id=%s channel=%s err=%v", channelRunID, channelID, err)
-			continue
-		}
-		log.Printf("event=heartbeat_turn_completed run_id=%s channel=%s status=%s thread=%s turn=%s tool_calls=%d", channelRunID, channelID, result.Status, result.ThreadID, result.TurnID, len(result.ToolCalls))
-		if strings.TrimSpace(result.ErrorMessage) != "" {
-			log.Printf("event=heartbeat_turn_error_detail run_id=%s channel=%s err=%s", channelRunID, channelID, result.ErrorMessage)
-		}
-	}
-
-	needsFallbackTurn := len(fallbackTasks) > 0 || len(taskItems) == 0
-	if needsFallbackTurn {
-		bundle := prompt.BuildHeartbeatBundle(instructions, prompt.HeartbeatInput{
-			DueTasks: fallbackTasks,
-		})
-		result, err := runtime.RunTurn(ctx, codex.TurnInput{
-			BaseInstructions:      bundle.BaseInstructions,
-			DeveloperInstructions: bundle.DeveloperInstructions,
-			UserPrompt:            bundle.UserPrompt,
-		})
-		if err != nil {
-			runErrs = append(runErrs, fmt.Errorf("fallback heartbeat turn: %w", err))
-			log.Printf("event=heartbeat_fallback_turn_failed run_id=%s err=%v", runID, err)
-		} else {
-			log.Printf("event=heartbeat_fallback_turn_completed run_id=%s status=%s tool_calls=%d", runID, result.Status, len(result.ToolCalls))
-			if strings.TrimSpace(result.ErrorMessage) != "" {
-				log.Printf("event=heartbeat_fallback_turn_error_detail run_id=%s err=%s", runID, result.ErrorMessage)
-			}
-		}
-	}
-
-	log.Printf("event=heartbeat_done run_id=%s due_tasks=%d turn_latency_ms=%d errors=%d", runID, len(taskItems), durationMS(time.Since(started)), len(runErrs))
-	return errors.Join(runErrs...)
+	return nil
 }
 
 func toPromptMessages(messages []discordx.Message) []prompt.RuntimeMessage {
@@ -397,4 +338,39 @@ func normalizeMergedCount(v int) int {
 		return 1
 	}
 	return v
+}
+
+func shouldRecoverDiscordDelivery(result codex.TurnResult) bool {
+	if strings.TrimSpace(result.AssistantText) == "" {
+		return false
+	}
+	if strings.TrimSpace(result.ErrorMessage) != "" {
+		return false
+	}
+	return !hasDiscordActionToolCall(result.ToolCalls)
+}
+
+func hasDiscordActionToolCall(calls []codex.MCPToolCall) bool {
+	for _, call := range calls {
+		name := strings.ToLower(strings.TrimSpace(call.Tool))
+		switch name {
+		case "send_message", "reply_message", "add_reaction":
+			return true
+		}
+	}
+	return false
+}
+
+func buildDeliveryRecoveryPrompt(channelID string, messageID string, assistantText string) string {
+	return strings.Join([]string{
+		"直前のターンで返信文を作成しましたが、Discordへの送信ツール実行が行われていません。",
+		fmt.Sprintf("対象チャンネルID: %s", strings.TrimSpace(channelID)),
+		fmt.Sprintf("対象メッセージID: %s", strings.TrimSpace(messageID)),
+		"",
+		"このターンでは必ず `reply_message` または `send_message` を1回以上実行して完了してください。",
+		"返信として自然なら `reply_message` を優先し、一般投稿が自然なら `send_message` を使ってください。",
+		"",
+		"送信候補テキスト:",
+		strings.TrimSpace(assistantText),
+	}, "\n")
 }

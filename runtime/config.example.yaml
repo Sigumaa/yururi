@@ -24,5 +24,3 @@ heartbeat:
   enabled: true
   cron: "0 */30 * * * *"
   timezone: "Asia/Tokyo"
-memory:
-  root_dir: "./runtime/memory"

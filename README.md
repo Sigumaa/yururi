@@ -6,8 +6,7 @@ Discord向け自律エージェント「ゆるり」。
 
 - Codex App Server (`codex --search app-server --listen stdio://`)
 - Discord inbound handler
-- MCP server (`/mcp`) with Discord tools + memory tools + utility tools
-- Markdown memory store (`memory/`)
+- MCP server (`/mcp`) with Discord tools + workspace doc tools + utility tools
 - Heartbeat cron runner
 
 ## 必要環境
@@ -36,7 +35,6 @@ Discord向け自律エージェント「ゆるり」。
 - `heartbeat.enabled`
 - `heartbeat.cron`
 - `heartbeat.timezone`
-- `memory.root_dir`
 
 `mcp.tool_policy.*` は `*` ワイルドカード対応、大小文字を区別しない。
 
@@ -64,10 +62,6 @@ go run ./cmd/yururi -config runtime/config.yaml
 - `list_channels`
 - `get_user_detail`
 - `get_current_time`
-- `memory_upsert_user_note`
-- `memory_upsert_channel_intent`
-- `memory_upsert_task`
-- `memory_query`
 - `read_workspace_doc`
 - `append_workspace_doc`
 - `replace_workspace_doc`

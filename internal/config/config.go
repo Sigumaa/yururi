@@ -29,7 +29,6 @@ type Config struct {
 	Codex     CodexConfig     `yaml:"codex"`
 	MCP       MCPConfig       `yaml:"mcp"`
 	Heartbeat HeartbeatConfig `yaml:"heartbeat"`
-	Memory    MemoryConfig    `yaml:"memory"`
 }
 
 type DiscordConfig struct {
@@ -70,10 +69,6 @@ type HeartbeatConfig struct {
 	Enabled  bool   `yaml:"enabled"`
 	Cron     string `yaml:"cron"`
 	Timezone string `yaml:"timezone"`
-}
-
-type MemoryConfig struct {
-	RootDir string `yaml:"root_dir"`
 }
 
 var (
@@ -147,9 +142,6 @@ func (c Config) Validate() error {
 	if c.MCP.URL == "" {
 		return errors.New("mcp.url is required")
 	}
-	if c.Memory.RootDir == "" {
-		return errors.New("memory.root_dir is required")
-	}
 	if c.Heartbeat.Enabled {
 		if c.Heartbeat.Cron == "" {
 			return errors.New("heartbeat.cron is required when heartbeat.enabled=true")
@@ -181,14 +173,6 @@ func (c *Config) normalize() {
 	}
 	c.MCP.ToolPolicy.AllowPatterns = cleanList(c.MCP.ToolPolicy.AllowPatterns)
 	c.MCP.ToolPolicy.DenyPatterns = cleanList(c.MCP.ToolPolicy.DenyPatterns)
-
-	if strings.TrimSpace(c.Memory.RootDir) == "" {
-		base := c.Codex.WorkspaceDir
-		if base == "" {
-			base = "."
-		}
-		c.Memory.RootDir = filepath.Join(base, "memory")
-	}
 }
 
 func applyEnvOverrides(cfg *Config) {
@@ -228,7 +212,6 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	applyString("HEARTBEAT_CRON", &cfg.Heartbeat.Cron)
 	applyString("HEARTBEAT_TIMEZONE", &cfg.Heartbeat.Timezone)
-	applyString("MEMORY_ROOT_DIR", &cfg.Memory.RootDir)
 }
 
 func parseArgs(v string) []string {

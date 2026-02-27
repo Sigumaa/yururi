@@ -57,8 +57,8 @@ func TestBuildMessageBundle(t *testing.T) {
 	if !strings.Contains(bundle.BaseInstructions, "YURURI.md") {
 		t.Fatalf("BaseInstructions missing YURURI.md: %q", bundle.BaseInstructions)
 	}
-	if !strings.Contains(bundle.BaseInstructions, "MEMORY.md/HEARTBEAT.md") {
-		t.Fatalf("BaseInstructions missing markdown primary memory guidance: %q", bundle.BaseInstructions)
+	if !strings.Contains(bundle.BaseInstructions, "4軸Markdown") {
+		t.Fatalf("BaseInstructions missing 4-axis markdown guidance: %q", bundle.BaseInstructions)
 	}
 	if !strings.Contains(bundle.UserPrompt, "ゆるり、これ見えてる？") {
 		t.Fatalf("UserPrompt missing current message: %q", bundle.UserPrompt)
@@ -66,14 +66,14 @@ func TestBuildMessageBundle(t *testing.T) {
 	if !strings.Contains(bundle.UserPrompt, "バースト統合件数: 4") {
 		t.Fatalf("UserPrompt missing merged count: %q", bundle.UserPrompt)
 	}
-	if !strings.Contains(bundle.DeveloperInstructions, "MCPツール") {
+	if !strings.Contains(bundle.DeveloperInstructions, "Discord MCPツール") {
 		t.Fatalf("DeveloperInstructions missing MCP guidance: %q", bundle.DeveloperInstructions)
+	}
+	if !strings.Contains(bundle.DeveloperInstructions, "reply_message または send_message") {
+		t.Fatalf("DeveloperInstructions missing explicit delivery guidance: %q", bundle.DeveloperInstructions)
 	}
 	if !strings.Contains(bundle.DeveloperInstructions, "read_workspace_doc / append_workspace_doc / replace_workspace_doc") {
 		t.Fatalf("DeveloperInstructions missing workspace doc tool priority guidance: %q", bundle.DeveloperInstructions)
-	}
-	if !strings.Contains(bundle.DeveloperInstructions, "runtime memory store") {
-		t.Fatalf("DeveloperInstructions missing runtime memory scope guidance: %q", bundle.DeveloperInstructions)
 	}
 	if !strings.Contains(bundle.DeveloperInstructions, "要約してMEMORY.md") {
 		t.Fatalf("DeveloperInstructions missing MEMORY summarization guidance: %q", bundle.DeveloperInstructions)
