@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"sort"
 	"strings"
@@ -46,6 +47,7 @@ const maxHeartbeatLogValueLen = 280
 func main() {
 	configPath := flag.String("config", "runtime/config.yaml", "path to config yaml")
 	flag.Parse()
+	configureLogOutput(os.Stdout)
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
