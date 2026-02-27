@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -28,6 +29,8 @@ import (
 type heartbeatRuntime interface {
 	RunTurn(ctx context.Context, input codex.TurnInput) (codex.TurnResult, error)
 }
+
+const maxHeartbeatLogValueLen = 280
 
 func main() {
 	configPath := flag.String("config", "runtime/config.yaml", "path to config yaml")
@@ -230,6 +233,38 @@ func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatR
 		return err
 	}
 	log.Printf("event=heartbeat_turn_completed run_id=%s status=%s thread=%s turn=%s tool_calls=%d turn_latency_ms=%d", runID, result.Status, result.ThreadID, result.TurnID, len(result.ToolCalls), durationMS(time.Since(started)))
+	if assistantText := strings.TrimSpace(result.AssistantText); assistantText != "" {
+		log.Printf("event=heartbeat_assistant_text run_id=%s thread=%s turn=%s text=%q", runID, result.ThreadID, result.TurnID, assistantText)
+		if maybeDecisionOutput(assistantText) {
+			decision, err := codex.ParseDecisionOutput(assistantText)
+			if err != nil {
+				log.Printf("event=heartbeat_decision_parse_failed run_id=%s thread=%s turn=%s err=%v", runID, result.ThreadID, result.TurnID, err)
+			} else {
+				log.Printf(
+					"event=heartbeat_decision_summary run_id=%s thread=%s turn=%s action=%s content=%q",
+					runID,
+					result.ThreadID,
+					result.TurnID,
+					decision.Action,
+					trimLogString(decision.Content, maxHeartbeatLogValueLen),
+				)
+			}
+		}
+	}
+	for i, toolCall := range result.ToolCalls {
+		log.Printf(
+			"event=heartbeat_tool_call run_id=%s thread=%s turn=%s index=%d server=%s tool=%s status=%s arguments=%q result=%q",
+			runID,
+			result.ThreadID,
+			result.TurnID,
+			i,
+			toolCall.Server,
+			toolCall.Tool,
+			toolCall.Status,
+			trimLogAny(toolCall.Arguments, maxHeartbeatLogValueLen),
+			trimLogAny(toolCall.Result, maxHeartbeatLogValueLen),
+		)
+	}
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=heartbeat_turn_error_detail run_id=%s err=%s", runID, result.ErrorMessage)
 	}
@@ -341,4 +376,37 @@ func normalizeMergedCount(v int) int {
 		return 1
 	}
 	return v
+}
+
+func trimLogAny(value any, maxLen int) string {
+	if value == nil {
+		return ""
+	}
+	if str, ok := value.(string); ok {
+		return trimLogString(str, maxLen)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return trimLogString(fmt.Sprint(value), maxLen)
+	}
+	return trimLogString(string(encoded), maxLen)
+}
+
+func trimLogString(text string, maxLen int) string {
+	trimmed := strings.TrimSpace(text)
+	if maxLen <= 0 || len(trimmed) <= maxLen {
+		return trimmed
+	}
+	if maxLen <= 3 {
+		return trimmed[:maxLen]
+	}
+	return trimmed[:maxLen-3] + "..."
+}
+
+func maybeDecisionOutput(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+	return strings.Contains(trimmed, "{") && strings.Contains(trimmed, "\"action\"")
 }

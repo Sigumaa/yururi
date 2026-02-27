@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 
@@ -57,6 +58,50 @@ func TestRunHeartbeatTurnCallsRuntime(t *testing.T) {
 	}
 	if !strings.Contains(runtime.calls[0].UserPrompt, "## due tasks") {
 		t.Fatalf("heartbeat prompt missing due tasks section: %q", runtime.calls[0].UserPrompt)
+	}
+}
+
+func TestTrimLogString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		text   string
+		maxLen int
+		want   string
+	}{
+		{name: "trim spaces", text: "  hello  ", maxLen: 10, want: "hello"},
+		{name: "within limit", text: "hello", maxLen: 5, want: "hello"},
+		{name: "over limit", text: "abcdef", maxLen: 5, want: "ab..."},
+		{name: "tiny max", text: "abcdef", maxLen: 2, want: "ab"},
+		{name: "non positive max", text: "abcdef", maxLen: 0, want: "abcdef"},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := trimLogString(tc.text, tc.maxLen); got != tc.want {
+				t.Fatalf("trimLogString(%q, %d) = %q, want %q", tc.text, tc.maxLen, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTrimLogAny(t *testing.T) {
+	t.Parallel()
+
+	if got := trimLogAny(nil, 10); got != "" {
+		t.Fatalf("trimLogAny(nil, 10) = %q, want empty string", got)
+	}
+	if got := trimLogAny("  hello  ", 10); got != "hello" {
+		t.Fatalf("trimLogAny(string, 10) = %q, want %q", got, "hello")
+	}
+	if got := trimLogAny(map[string]string{"a": "b"}, 20); got != `{"a":"b"}` {
+		t.Fatalf("trimLogAny(map, 20) = %q, want %q", got, `{"a":"b"}`)
+	}
+	if got := trimLogAny(math.NaN(), 20); got != "NaN" {
+		t.Fatalf("trimLogAny(NaN, 20) = %q, want %q", got, "NaN")
 	}
 }
 
