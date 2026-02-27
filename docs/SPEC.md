@@ -121,3 +121,9 @@
 3. Web検索は常時有効で起動する。
 4. 定期依頼自動登録は`owner_user_id`のみ。
 5. 本計画は実装着手時にそのままタスク分解可能な粒度で確定済み。
+
+## 追補（2026-02-27）
+1. リアーキテクトの実装順序と詳細要件は`docs/REARCHITECTURE.md`を正とする。
+2. `thread/start`毎回作成の挙動は段階的に廃止し、チャンネルセッション＋`turn/steer`中心へ移行する。
+3. 4軸Markdown（`YURURI.md`/`SOUL.md`/`MEMORY.md`/`HEARTBEAT.md`）を主記憶として扱う。
+4. 本書と`docs/REARCHITECTURE.md`で差異が出た場合は、`docs/REARCHITECTURE.md`を優先する。
