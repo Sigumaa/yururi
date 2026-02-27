@@ -245,7 +245,7 @@ func TestPostHeartbeatWhisperStillPostsWhenHistoryReadFails(t *testing.T) {
 func TestBuildAutonomyPromptDoesNotIncludeHeartbeatPrompt(t *testing.T) {
 	t.Parallel()
 
-	got := buildAutonomyPrompt(nil, "")
+	got := buildAutonomyPrompt(nil, "", nil)
 	if !strings.Contains(got, prompt.AutonomySystemPrompt) {
 		t.Fatalf("autonomy prompt missing autonomy system prompt: %q", got)
 	}
@@ -267,7 +267,7 @@ func TestBuildAutonomyPromptIncludesObservedChannelsAndTimes(t *testing.T) {
 		{ChannelID: "111", Name: "times-yururi"},
 		{ChannelID: "222", Name: "times-web"},
 	}
-	got := buildAutonomyPrompt(channels, "999")
+	got := buildAutonomyPrompt(channels, "999", nil)
 	if !strings.Contains(got, "times_channel_id=999") {
 		t.Fatalf("autonomy prompt missing times channel id: %q", got)
 	}
@@ -276,6 +276,41 @@ func TestBuildAutonomyPromptIncludesObservedChannelsAndTimes(t *testing.T) {
 	}
 	if !strings.Contains(got, "- times-web (222)") {
 		t.Fatalf("autonomy prompt missing second channel: %q", got)
+	}
+}
+
+func TestBuildAutonomyPromptIncludesTimesRecentReference(t *testing.T) {
+	t.Parallel()
+
+	got := buildAutonomyPrompt(nil, "times", []string{"first", "second"})
+	if !strings.Contains(got, "times直近投稿参照") {
+		t.Fatalf("autonomy prompt missing times history section: %q", got)
+	}
+	if !strings.Contains(got, "- first") || !strings.Contains(got, "- second") {
+		t.Fatalf("autonomy prompt missing times history entries: %q", got)
+	}
+	if !strings.Contains(got, "真似しない") {
+		t.Fatalf("autonomy prompt missing anti-anchor note: %q", got)
+	}
+}
+
+func TestExtractTimesPromptHistory(t *testing.T) {
+	t.Parallel()
+
+	messages := []discordx.Message{
+		{Content: " newest message "},
+		{Content: "   "},
+		{Content: "oldest message"},
+	}
+	got := extractTimesPromptHistory(messages, 8)
+	want := []string{"oldes...", "newes..."}
+	if len(got) != len(want) {
+		t.Fatalf("extractTimesPromptHistory len = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("extractTimesPromptHistory[%d] = %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 

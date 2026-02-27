@@ -49,6 +49,8 @@ type timesWhisperState struct {
 const (
 	maxHeartbeatLogValueLen        = 280
 	timesWhisperDedupeHistoryLimit = 20
+	autonomyTimesHistoryLimit      = 200
+	autonomyTimesHistoryMaxLen     = 160
 )
 
 func main() {
@@ -320,7 +322,18 @@ func runAutonomyTurn(ctx context.Context, cfg config.Config, runtime heartbeatRu
 	if err != nil {
 		log.Printf("event=autonomy_list_channels_failed run_id=%s err=%v", runID, err)
 	}
-	userPrompt := buildAutonomyPrompt(channels, cfg.Persona.TimesChannelID)
+	timesChannelID := strings.TrimSpace(cfg.Persona.TimesChannelID)
+	timesRecent := []string(nil)
+	if timesChannelID != "" && gateway != nil {
+		history, historyErr := gateway.ReadMessageHistory(ctx, timesChannelID, "", autonomyTimesHistoryLimit)
+		if historyErr != nil {
+			log.Printf("event=autonomy_times_history_failed run_id=%s channel=%s err=%v", runID, timesChannelID, historyErr)
+		} else {
+			timesRecent = extractTimesPromptHistory(history, autonomyTimesHistoryMaxLen)
+			log.Printf("event=autonomy_times_history_loaded run_id=%s channel=%s messages=%d", runID, timesChannelID, len(timesRecent))
+		}
+	}
+	userPrompt := buildAutonomyPrompt(channels, timesChannelID, timesRecent)
 	bundle := prompt.BuildHeartbeatBundle(instructions)
 	result, err := runtime.RunTurn(ctx, codex.TurnInput{
 		BaseInstructions:      bundle.BaseInstructions,
@@ -558,7 +571,7 @@ func postHeartbeatWhisper(ctx context.Context, cfg config.Config, sender heartbe
 	return nil
 }
 
-func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string) string {
+func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string, timesRecent []string) string {
 	lines := []string{
 		prompt.AutonomySystemPrompt,
 		"指定チャンネルを観察し、返信するほどではないが共有価値のある内容は times チャンネルへ send_message で共有してよいです。",
@@ -577,7 +590,28 @@ func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string)
 		}
 		lines = append(lines, "", "観察可能チャンネル:", strings.Join(items, "\n"))
 	}
+	if len(timesRecent) > 0 {
+		lines = append(lines, "", "times直近投稿参照（重複回避のため。文体や内容を真似しないこと）:")
+		for _, text := range timesRecent {
+			lines = append(lines, "- "+text)
+		}
+	}
 	return strings.Join(lines, "\n")
+}
+
+func extractTimesPromptHistory(messages []discordx.Message, maxLen int) []string {
+	if len(messages) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(messages))
+	for i := len(messages) - 1; i >= 0; i-- {
+		text := trimLogString(messages[i].Content, maxLen)
+		if text == "" {
+			continue
+		}
+		out = append(out, text)
+	}
+	return out
 }
 
 func postMessageWhisper(ctx context.Context, cfg config.Config, sender heartbeatWhisperSender, whisperState *timesWhisperState, runID string, message *discordgo.MessageCreate, result codex.TurnResult) error {
