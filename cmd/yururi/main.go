@@ -550,9 +550,9 @@ func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string)
 		prompt.HeartbeatSystemPrompt,
 		"",
 		"これは自律観察モードです。",
-		"指定チャンネルを観察し、返信するほどではないが共有価値のある所感は times チャンネルへ send_message で共有してよいです。",
+		"指定チャンネルを観察し、返信するほどではないが共有価値のある内容は times チャンネルへ send_message で共有してよいです。",
 		"返信・times投稿を含むすべての出力で SOUL.md のキャラクター・語り口を維持してください。",
-		"times投稿は形式を固定せず、作業手順の列挙よりも、その時に感じたこと・考えたことを優先してください。",
+		"times投稿は形式を固定しません。何を言うかは SOUL.md のペルソナに沿って自由に決めてください。",
 		"ownerの最近のX投稿確認には twilog-mcp が利用可能なら優先してください。",
 	}
 	if strings.TrimSpace(timesChannelID) != "" {
@@ -679,53 +679,11 @@ func hasDeliveryToolCall(toolCalls []codex.MCPToolCall) bool {
 }
 
 func selectPersonaWhisperText(text string) (string, bool) {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
+	line := trimLogString(text, 280)
+	if line == "" {
 		return "", false
 	}
-	candidates := splitWhisperCandidates(trimmed)
-	for _, candidate := range candidates {
-		line := trimLogString(candidate, 280)
-		if line == "" {
-			continue
-		}
-		if isOperationalWhisperLine(line) {
-			continue
-		}
-		return line, true
-	}
-	return "", false
-}
-
-func splitWhisperCandidates(text string) []string {
-	parts := strings.FieldsFunc(text, func(r rune) bool {
-		return r == '\n' || r == '\r' || r == '。' || r == '!' || r == '！' || r == '?' || r == '？'
-	})
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
-			continue
-		}
-		out = append(out, trimmed)
-	}
-	return out
-}
-
-func isOperationalWhisperLine(line string) bool {
-	lowered := strings.ToLower(strings.TrimSpace(line))
-	if lowered == "" {
-		return true
-	}
-	for _, token := range []string{
-		"確認", "実施", "終了", "投稿", "対応", "実行", "整理", "読込", "読み込み", "投下", "完了", "作業",
-		"confirmed", "completed", "finished", "executed", "done",
-	} {
-		if strings.Contains(lowered, strings.ToLower(token)) {
-			return true
-		}
-	}
-	return false
+	return line, true
 }
 
 func logDecisionSummary(eventPrefix string, runID string, threadID string, turnID string, assistantText string) {

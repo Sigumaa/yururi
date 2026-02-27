@@ -216,11 +216,12 @@ func TestBuildMessageWhisperMessage(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			name: "skip operational report",
+			name: "post operational report as is",
 			result: codex.TurnResult{
 				AssistantText: "completed. executed.",
 			},
-			wantOK: false,
+			wantOK:  true,
+			wantHas: "completed. executed.",
 		},
 	}
 
@@ -287,11 +288,14 @@ func TestTrimLogAny(t *testing.T) {
 func TestSelectPersonaWhisperText(t *testing.T) {
 	t.Parallel()
 
-	if got, ok := selectPersonaWhisperText("completed. executed."); ok || got != "" {
-		t.Fatalf("selectPersonaWhisperText(operational) = (%q, %v), want empty/false", got, ok)
+	if got, ok := selectPersonaWhisperText("  "); ok || got != "" {
+		t.Fatalf("selectPersonaWhisperText(empty) = (%q, %v), want empty/false", got, ok)
 	}
-	if got, ok := selectPersonaWhisperText("completed\nTHOUGHT_LINE_1"); !ok || got != "THOUGHT_LINE_1" {
-		t.Fatalf("selectPersonaWhisperText(mixed) = (%q, %v), want thought line", got, ok)
+	if got, ok := selectPersonaWhisperText("completed. executed."); !ok || got != "completed. executed." {
+		t.Fatalf("selectPersonaWhisperText(operational) = (%q, %v), want pass-through", got, ok)
+	}
+	if got, ok := selectPersonaWhisperText("line1\nline2"); !ok || got != "line1\nline2" {
+		t.Fatalf("selectPersonaWhisperText(multiline) = (%q, %v), want pass-through", got, ok)
 	}
 }
 

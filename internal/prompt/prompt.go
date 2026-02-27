@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	HeartbeatSystemPrompt = "heartbeat.mdがワークスペース内に存在する場合はそれを確認し、内容に従って作業を行なってください。過去のチャットで言及された古いタスクを推測したり繰り返してはいけない。特に対応すべき事項がない場合は終了する。出力文体は常にSOUL.mdのキャラクター定義を最優先すること。times向けの共有は形式自由だが、作業手順の列挙より所感を優先すること。"
+	HeartbeatSystemPrompt = "heartbeat.mdがワークスペース内に存在する場合はそれを確認し、内容に従って作業を行なってください。過去のチャットで言及された古いタスクを推測したり繰り返してはいけない。特に対応すべき事項がない場合は終了する。出力文体は常にSOUL.mdのキャラクター定義を最優先すること。times向けの共有は形式自由で、内容はペルソナに沿って自由に決めてよい。"
 )
 
 var (
@@ -197,9 +197,9 @@ func buildDeveloperInstructions() string {
 		"調査や複数ツール呼び出しを行う場合は必要に応じてstart_typingを使うこと。",
 		"X投稿やトレンドなど鮮度が必要な調査では、x_search が利用可能なら優先し、得られた引用URLを活用すること。",
 		"twilog-mcp が利用可能な場合、ownerのX投稿確認には twilog-mcp を優先してよい。",
-		"返信するほどではないが所感を残す価値がある場合は、times_channel_id が与えられていれば send_message で共有してよい。",
+		"返信するほどではないが共有したい内容がある場合は、times_channel_id が与えられていれば send_message で共有してよい。",
 		"すべての出力（reply/send/times/heartbeat/autonomy）でSOUL.mdのキャラクター・語り口を最優先すること。",
-		"timesへの投稿は形式を固定せず、作業ログよりもその時の考え・気持ちを優先してよい。",
+		"timesへの投稿は形式を固定しない。何を言うかはSOUL.mdのペルソナに沿って自由に決めること。",
 		"会話本文の生ログを永続保存しないこと。ユーザー/チャンネルの好みや運用ルールは要約してMEMORY.mdへ記録すること。",
 		"ユーザーから『覚えて』と言われた内容は、MEMORY.mdまたはHEARTBEAT.mdへ要約して反映すること。read_workspace_doc / append_workspace_doc / replace_workspace_docを優先すること。",
 		"指定チャンネルの趣旨に合わせて口調と出力内容を調整すること。",
