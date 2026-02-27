@@ -30,6 +30,7 @@ type Client struct {
 	workspaceDir    string
 	homeDir         string
 	mcpURL          string
+	mcpServers      map[string]config.CodexMCPServerConfig
 
 	mu      sync.Mutex
 	session *appServerSession
@@ -89,6 +90,7 @@ func NewClient(cfg config.CodexConfig, mcpURL string) *Client {
 		workspaceDir:    cfg.WorkspaceDir,
 		homeDir:         cfg.HomeDir,
 		mcpURL:          strings.TrimSpace(mcpURL),
+		mcpServers:      copyMCPServers(cfg.MCPServers),
 	}
 }
 
@@ -262,7 +264,7 @@ func (c *Client) startThreadLocked(input TurnInput) (string, error) {
 	}
 
 	threadReqID := c.nextRequestIDLocked()
-	if err := sendRequest(c.session.enc, threadReqID, "thread/start", threadStartParams(input, c.model, c.workspaceDir, c.reasoningEffort, c.mcpURL)); err != nil {
+	if err := sendRequest(c.session.enc, threadReqID, "thread/start", threadStartParams(input, c.model, c.workspaceDir, c.reasoningEffort, c.mcpURL, c.mcpServers)); err != nil {
 		return "", err
 	}
 	threadResp, err := readUntilResponse(c.session.dec, c.session.enc, threadReqID, nil)
@@ -827,7 +829,7 @@ func isTurnCompletedMethod(method string) bool {
 	return method == "turn_completed"
 }
 
-func threadStartParams(input TurnInput, model string, cwd string, reasoningEffort string, mcpURL string) map[string]any {
+func threadStartParams(input TurnInput, model string, cwd string, reasoningEffort string, mcpURL string, extraMCPServers map[string]config.CodexMCPServerConfig) map[string]any {
 	params := map[string]any{
 		"approvalPolicy":         "never",
 		"sandbox":                "workspace-write",
@@ -849,18 +851,90 @@ func threadStartParams(input TurnInput, model string, cwd string, reasoningEffor
 	if strings.TrimSpace(reasoningEffort) != "" {
 		cfg["model_reasoning_effort"] = strings.TrimSpace(reasoningEffort)
 	}
-	if strings.TrimSpace(mcpURL) != "" {
-		cfg["mcp_servers"] = map[string]any{
-			"discord": map[string]any{
-				"url": strings.TrimSpace(mcpURL),
-			},
-		}
+	mcpServers := buildMCPServersConfig(strings.TrimSpace(mcpURL), extraMCPServers)
+	if len(mcpServers) > 0 {
+		cfg["mcp_servers"] = mcpServers
 	}
 	if len(cfg) > 0 {
 		params["config"] = cfg
 	}
 
 	return params
+}
+
+func buildMCPServersConfig(discordMCPURL string, extraMCPServers map[string]config.CodexMCPServerConfig) map[string]any {
+	mcpServers := map[string]any{}
+	if discordMCPURL != "" {
+		mcpServers["discord"] = map[string]any{
+			"url": discordMCPURL,
+		}
+	}
+	for name, server := range extraMCPServers {
+		key := strings.TrimSpace(name)
+		if key == "" || strings.EqualFold(key, "discord") {
+			continue
+		}
+		entry := map[string]any{}
+		if strings.TrimSpace(server.URL) != "" {
+			entry["url"] = strings.TrimSpace(server.URL)
+		}
+		if strings.TrimSpace(server.Command) != "" {
+			entry["command"] = strings.TrimSpace(server.Command)
+		}
+		if len(server.Args) > 0 {
+			args := make([]string, 0, len(server.Args))
+			for _, arg := range server.Args {
+				trimmed := strings.TrimSpace(arg)
+				if trimmed == "" {
+					continue
+				}
+				args = append(args, trimmed)
+			}
+			if len(args) > 0 {
+				entry["args"] = args
+			}
+		}
+		if len(server.Headers) > 0 {
+			headers := map[string]any{}
+			for k, v := range server.Headers {
+				key := strings.TrimSpace(k)
+				val := strings.TrimSpace(v)
+				if key == "" || val == "" {
+					continue
+				}
+				headers[key] = val
+			}
+			if len(headers) > 0 {
+				entry["headers"] = headers
+			}
+		}
+		if len(entry) > 0 {
+			mcpServers[key] = entry
+		}
+	}
+	return mcpServers
+}
+
+func copyMCPServers(src map[string]config.CodexMCPServerConfig) map[string]config.CodexMCPServerConfig {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]config.CodexMCPServerConfig, len(src))
+	for name, server := range src {
+		cloned := config.CodexMCPServerConfig{
+			URL:     strings.TrimSpace(server.URL),
+			Command: strings.TrimSpace(server.Command),
+			Args:    append([]string(nil), server.Args...),
+		}
+		if len(server.Headers) > 0 {
+			cloned.Headers = make(map[string]string, len(server.Headers))
+			for k, v := range server.Headers {
+				cloned.Headers[k] = v
+			}
+		}
+		dst[name] = cloned
+	}
+	return dst
 }
 
 func turnStartParams(threadID string, prompt string) map[string]any {

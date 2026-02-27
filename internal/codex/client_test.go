@@ -43,7 +43,7 @@ func TestThreadStartParamsIncludesMCPConfig(t *testing.T) {
 		BaseInstructions:      "base",
 		DeveloperInstructions: "dev",
 	}
-	params := threadStartParams(input, "gpt-5.3-codex", "/tmp/work", "medium", "http://127.0.0.1:39393/mcp")
+	params := threadStartParams(input, "gpt-5.3-codex", "/tmp/work", "medium", "http://127.0.0.1:39393/mcp", nil)
 
 	configValue, ok := params["config"].(map[string]any)
 	if !ok {
@@ -63,6 +63,45 @@ func TestThreadStartParamsIncludesMCPConfig(t *testing.T) {
 
 	if got, _ := configValue["model_reasoning_effort"].(string); got != "medium" {
 		t.Fatalf("model_reasoning_effort = %q, want %q", got, "medium")
+	}
+}
+
+func TestThreadStartParamsIncludesExtraMCPServers(t *testing.T) {
+	t.Parallel()
+
+	params := threadStartParams(TurnInput{}, "", "", "", "http://127.0.0.1:39393/mcp", map[string]config.CodexMCPServerConfig{
+		"twilog-mcp": {
+			Command: "npx",
+			Args:    []string{"mcp-remote", "https://twilog-mcp.togetter.dev/mcp"},
+			Headers: map[string]string{"Authorization": "Bearer token"},
+		},
+	})
+
+	configValue, ok := params["config"].(map[string]any)
+	if !ok {
+		t.Fatalf("threadStartParams config missing: %#v", params)
+	}
+	mcpServers, ok := configValue["mcp_servers"].(map[string]any)
+	if !ok {
+		t.Fatalf("mcp_servers missing: %#v", configValue)
+	}
+	twilog, ok := mcpServers["twilog-mcp"].(map[string]any)
+	if !ok {
+		t.Fatalf("twilog-mcp config missing: %#v", mcpServers)
+	}
+	if twilog["command"] != "npx" {
+		t.Fatalf("twilog command = %#v, want npx", twilog["command"])
+	}
+	args, ok := twilog["args"].([]string)
+	if !ok || len(args) != 2 {
+		t.Fatalf("twilog args = %#v, want 2 entries", twilog["args"])
+	}
+	headers, ok := twilog["headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("twilog headers = %#v", twilog["headers"])
+	}
+	if headers["Authorization"] != "Bearer token" {
+		t.Fatalf("Authorization header = %#v, want Bearer token", headers["Authorization"])
 	}
 }
 

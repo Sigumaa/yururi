@@ -3,6 +3,7 @@ discord:
   guild_id: "YOUR_GUILD_ID"
   target_channel_ids:
     - "TARGET_CHANNEL_ID"
+  observe_channel_ids: []
   excluded_channel_ids: []
   allowed_bot_user_ids: []
 persona:
@@ -16,6 +17,12 @@ codex:
   reasoning_effort: "medium"
   workspace_dir: "./runtime/workspace"
   home_dir: "./runtime/.codex-home"
+  mcp_servers:
+    twilog-mcp:
+      command: "npx"
+      args: ["mcp-remote", "https://twilog-mcp.togetter.dev/mcp"]
+      headers:
+        Authorization: "Bearer ${CODEX_MCP_TWILOG_BEARER_TOKEN}"
 mcp:
   bind: "127.0.0.1:39393"
   url: "http://127.0.0.1:39393/mcp"
@@ -25,6 +32,10 @@ mcp:
 heartbeat:
   enabled: true
   cron: "0 */30 * * * *"
+  timezone: "Asia/Tokyo"
+autonomy:
+  enabled: false
+  cron: "0 */15 * * * *"
   timezone: "Asia/Tokyo"
 xai:
   enabled: false

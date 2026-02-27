@@ -41,19 +41,33 @@ type UserDetail struct {
 }
 
 type Gateway struct {
-	session         *discordgo.Session
-	guildID         string
-	targetChannels  map[string]struct{}
-	excludedChannel map[string]struct{}
+	session          *discordgo.Session
+	guildID          string
+	writableChannels map[string]struct{}
+	readableChannels map[string]struct{}
+	excludedChannel  map[string]struct{}
 
 	typingMu    sync.Mutex
 	typingStops map[string]context.CancelFunc
 }
 
 func NewGateway(session *discordgo.Session, cfg config.DiscordConfig) *Gateway {
-	target := make(map[string]struct{}, len(cfg.TargetChannelIDs))
+	writable := make(map[string]struct{}, len(cfg.TargetChannelIDs))
+	readable := make(map[string]struct{}, len(cfg.TargetChannelIDs)+len(cfg.ObserveChannelIDs))
 	for _, id := range cfg.TargetChannelIDs {
-		target[strings.TrimSpace(id)] = struct{}{}
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		writable[trimmed] = struct{}{}
+		readable[trimmed] = struct{}{}
+	}
+	for _, id := range cfg.ObserveChannelIDs {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		readable[trimmed] = struct{}{}
 	}
 	excluded := make(map[string]struct{}, len(cfg.ExcludedChannelIDs))
 	for _, id := range cfg.ExcludedChannelIDs {
@@ -61,16 +75,17 @@ func NewGateway(session *discordgo.Session, cfg config.DiscordConfig) *Gateway {
 	}
 
 	return &Gateway{
-		session:         session,
-		guildID:         strings.TrimSpace(cfg.GuildID),
-		targetChannels:  target,
-		excludedChannel: excluded,
-		typingStops:     map[string]context.CancelFunc{},
+		session:          session,
+		guildID:          strings.TrimSpace(cfg.GuildID),
+		writableChannels: writable,
+		readableChannels: readable,
+		excludedChannel:  excluded,
+		typingStops:      map[string]context.CancelFunc{},
 	}
 }
 
 func (g *Gateway) ReadMessageHistory(ctx context.Context, channelID string, beforeMessageID string, limit int) ([]Message, error) {
-	if err := g.validateChannel(channelID); err != nil {
+	if err := g.validateReadableChannel(channelID); err != nil {
 		return nil, err
 	}
 	if limit <= 0 {
@@ -131,7 +146,7 @@ func (g *Gateway) ReadMessageHistory(ctx context.Context, channelID string, befo
 }
 
 func (g *Gateway) SendMessage(ctx context.Context, channelID string, content string) (string, error) {
-	if err := g.validateChannel(channelID); err != nil {
+	if err := g.validateWritableChannel(channelID); err != nil {
 		return "", err
 	}
 	text := strings.TrimSpace(content)
@@ -149,7 +164,7 @@ func (g *Gateway) SendMessage(ctx context.Context, channelID string, content str
 }
 
 func (g *Gateway) ReplyMessage(ctx context.Context, channelID string, replyToMessageID string, content string) (string, error) {
-	if err := g.validateChannel(channelID); err != nil {
+	if err := g.validateWritableChannel(channelID); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(replyToMessageID) == "" {
@@ -177,7 +192,7 @@ func (g *Gateway) ReplyMessage(ctx context.Context, channelID string, replyToMes
 }
 
 func (g *Gateway) AddReaction(ctx context.Context, channelID string, messageID string, emoji string) error {
-	if err := g.validateChannel(channelID); err != nil {
+	if err := g.validateWritableChannel(channelID); err != nil {
 		return err
 	}
 	if strings.TrimSpace(messageID) == "" {
@@ -239,8 +254,8 @@ func (g *Gateway) StartTyping(_ context.Context, channelID string, duration time
 }
 
 func (g *Gateway) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
-	ids := make([]string, 0, len(g.targetChannels))
-	for channelID := range g.targetChannels {
+	ids := make([]string, 0, len(g.readableChannels))
+	for channelID := range g.readableChannels {
 		if _, excluded := g.excludedChannel[channelID]; excluded {
 			continue
 		}
@@ -265,7 +280,7 @@ func (g *Gateway) ListChannels(ctx context.Context) ([]ChannelInfo, error) {
 }
 
 func (g *Gateway) GetUserDetail(ctx context.Context, channelID string, userID string) (UserDetail, error) {
-	if err := g.validateChannel(channelID); err != nil {
+	if err := g.validateReadableChannel(channelID); err != nil {
 		return UserDetail{}, err
 	}
 	if strings.TrimSpace(userID) == "" {
@@ -291,7 +306,7 @@ func (g *Gateway) GetUserDetail(ctx context.Context, channelID string, userID st
 	}, nil
 }
 
-func (g *Gateway) validateChannel(channelID string) error {
+func (g *Gateway) validateWritableChannel(channelID string) error {
 	channelID = strings.TrimSpace(channelID)
 	if channelID == "" {
 		return errors.New("channel_id is required")
@@ -299,8 +314,22 @@ func (g *Gateway) validateChannel(channelID string) error {
 	if _, excluded := g.excludedChannel[channelID]; excluded {
 		return fmt.Errorf("channel %s is excluded", channelID)
 	}
-	if _, ok := g.targetChannels[channelID]; !ok {
+	if _, ok := g.writableChannels[channelID]; !ok {
 		return fmt.Errorf("channel %s is not in target_channel_ids", channelID)
+	}
+	return nil
+}
+
+func (g *Gateway) validateReadableChannel(channelID string) error {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return errors.New("channel_id is required")
+	}
+	if _, excluded := g.excludedChannel[channelID]; excluded {
+		return fmt.Errorf("channel %s is excluded", channelID)
+	}
+	if _, ok := g.readableChannels[channelID]; !ok {
+		return fmt.Errorf("channel %s is not in target_channel_ids or observe_channel_ids", channelID)
 	}
 	return nil
 }

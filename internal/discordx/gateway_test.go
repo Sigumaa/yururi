@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/sigumaa/yururi/internal/config"
 )
 
 func TestAuthorDisplayName(t *testing.T) {
@@ -64,5 +65,28 @@ func TestAuthorDisplayName(t *testing.T) {
 				t.Fatalf("authorDisplayName() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestGatewayChannelValidation(t *testing.T) {
+	t.Parallel()
+
+	gateway := NewGateway(nil, config.DiscordConfig{
+		GuildID:           "g1",
+		TargetChannelIDs:  []string{"c-target"},
+		ObserveChannelIDs: []string{"c-observe"},
+	})
+
+	if err := gateway.validateReadableChannel("c-target"); err != nil {
+		t.Fatalf("validateReadableChannel(target) error = %v", err)
+	}
+	if err := gateway.validateReadableChannel("c-observe"); err != nil {
+		t.Fatalf("validateReadableChannel(observe) error = %v", err)
+	}
+	if err := gateway.validateWritableChannel("c-target"); err != nil {
+		t.Fatalf("validateWritableChannel(target) error = %v", err)
+	}
+	if err := gateway.validateWritableChannel("c-observe"); err == nil {
+		t.Fatal("validateWritableChannel(observe) error = nil, want error")
 	}
 }

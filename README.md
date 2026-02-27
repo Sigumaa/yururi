@@ -23,11 +23,15 @@ Discord向け自律エージェント「ゆるり」。
 
 - `discord.guild_id`
 - `discord.target_channel_ids[]`
+- `discord.observe_channel_ids[]`
 - `persona.owner_user_id`
+- `persona.times_channel_id`
+- `persona.times_min_interval_sec`
 - `codex.command`
 - `codex.args`
 - `codex.workspace_dir`
 - `codex.home_dir`
+- `codex.mcp_servers.*`
 - `mcp.bind`
 - `mcp.url`
 - `mcp.tool_policy.allow_patterns[]`
@@ -35,6 +39,9 @@ Discord向け自律エージェント「ゆるり」。
 - `heartbeat.enabled`
 - `heartbeat.cron`
 - `heartbeat.timezone`
+- `autonomy.enabled`
+- `autonomy.cron`
+- `autonomy.timezone`
 - `xai.enabled`
 - `xai.api_key`
 - `xai.base_url`
@@ -43,6 +50,7 @@ Discord向け自律エージェント「ゆるり」。
 
 `mcp.tool_policy.*` は `*` ワイルドカード対応、大小文字を区別しない。
 `x_search` を使う場合は `xai.enabled=true` と `xai.api_key` を設定する。
+`twilog-mcp` を使う場合は `codex.mcp_servers.twilog-mcp` を設定し、必要なら `CODEX_MCP_TWILOG_BEARER_TOKEN` を設定する。
 
 ## 起動
 

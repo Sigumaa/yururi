@@ -44,6 +44,15 @@ codex:
 	if !cfg.Heartbeat.Enabled {
 		t.Fatal("Heartbeat.Enabled = false, want true by default")
 	}
+	if cfg.Autonomy.Enabled {
+		t.Fatal("Autonomy.Enabled = true, want false by default")
+	}
+	if cfg.Autonomy.Cron == "" {
+		t.Fatal("Autonomy.Cron is empty")
+	}
+	if cfg.Autonomy.Timezone == "" {
+		t.Fatal("Autonomy.Timezone is empty")
+	}
 	if cfg.XAI.Enabled {
 		t.Fatal("XAI.Enabled = true, want false by default")
 	}
@@ -89,7 +98,11 @@ mcp:
 	t.Setenv("MCP_URL", "http://127.0.0.1:44444/mcp")
 	t.Setenv("MCP_TOOL_POLICY_ALLOW_PATTERNS", "read_*, get_current_time")
 	t.Setenv("MCP_TOOL_POLICY_DENY_PATTERNS", "replace_workspace_doc")
+	t.Setenv("DISCORD_OBSERVE_CHANNEL_IDS", "observe-1,observe-2")
 	t.Setenv("HEARTBEAT_ENABLED", "false")
+	t.Setenv("AUTONOMY_ENABLED", "true")
+	t.Setenv("AUTONOMY_CRON", "0 */5 * * * *")
+	t.Setenv("AUTONOMY_TIMEZONE", "UTC")
 	t.Setenv("XAI_ENABLED", "true")
 	t.Setenv("XAI_API_KEY", "xai-key")
 	t.Setenv("XAI_BASE_URL", "https://api.x.ai/v1/")
@@ -117,6 +130,15 @@ mcp:
 	if cfg.Heartbeat.Enabled {
 		t.Fatalf("Heartbeat.Enabled = true, want false")
 	}
+	if !cfg.Autonomy.Enabled {
+		t.Fatalf("Autonomy.Enabled = false, want true")
+	}
+	if cfg.Autonomy.Cron != "0 */5 * * * *" {
+		t.Fatalf("Autonomy.Cron = %q", cfg.Autonomy.Cron)
+	}
+	if cfg.Autonomy.Timezone != "UTC" {
+		t.Fatalf("Autonomy.Timezone = %q", cfg.Autonomy.Timezone)
+	}
 	if !cfg.XAI.Enabled {
 		t.Fatalf("XAI.Enabled = false, want true")
 	}
@@ -131,6 +153,9 @@ mcp:
 	}
 	if cfg.XAI.TimeoutSec != 45 {
 		t.Fatalf("XAI.TimeoutSec = %d", cfg.XAI.TimeoutSec)
+	}
+	if got, want := cfg.Discord.ObserveChannelIDs, []string{"observe-1", "observe-2"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("Discord.ObserveChannelIDs = %v, want %v", got, want)
 	}
 	if cfg.Persona.TimesChannelID != "times-channel" {
 		t.Fatalf("Persona.TimesChannelID = %q, want times-channel", cfg.Persona.TimesChannelID)

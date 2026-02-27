@@ -92,7 +92,7 @@ func main() {
 			log.Printf("event=channel_burst_coalesced guild=%s channel=%s merged=%d latest_message=%s queue_wait_ms=%d", m.GuildID, m.ChannelID, meta.MergedCount, m.ID, durationMS(meta.QueueWait))
 		}
 		runID := nextRunID(&runSeq, "msg")
-		handleMessage(ctx, cfg, coordinator, gateway, discord, m, meta, runID)
+		handleMessage(ctx, cfg, coordinator, gateway, discord, m, meta, whisperState, runID)
 	})
 
 	errCh := make(chan error, 1)
@@ -123,6 +123,15 @@ func main() {
 		}
 		runner.Start(ctx)
 	}
+	if cfg.Autonomy.Enabled {
+		runner, err := heartbeat.NewRunner(cfg.Autonomy.Cron, cfg.Autonomy.Timezone, func(runCtx context.Context) error {
+			return runAutonomyTurn(runCtx, cfg, aiClient, gateway, whisperState, nextRunID(&runSeq, "auto"))
+		})
+		if err != nil {
+			log.Fatalf("init autonomy runner: %v", err)
+		}
+		runner.Start(ctx)
+	}
 
 	log.Printf(
 		"yururi started: mcp_url=%s model=%s reasoning=%s x_search_enabled=%t x_search_model=%s",
@@ -143,7 +152,7 @@ func main() {
 	log.Printf("yururi stopped")
 }
 
-func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orchestrator.Coordinator, gateway *discordx.Gateway, session *discordgo.Session, m *discordgo.MessageCreate, meta dispatch.CallbackMetadata, runID string) {
+func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orchestrator.Coordinator, gateway *discordx.Gateway, session *discordgo.Session, m *discordgo.MessageCreate, meta dispatch.CallbackMetadata, whisperState *timesWhisperState, runID string) {
 	authorID := ""
 	authorIsBot := false
 	authorName := ""
@@ -228,6 +237,9 @@ func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orch
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=codex_turn_error_detail run_id=%s message=%s err=%s", runID, m.ID, result.ErrorMessage)
 	}
+	if err := postMessageWhisper(ctx, cfg, gateway, whisperState, runID, m, channelName, result); err != nil {
+		log.Printf("event=message_times_post_failed run_id=%s message=%s err=%v", runID, m.ID, err)
+	}
 }
 
 func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatRuntime, sender heartbeatWhisperSender, whisperState *timesWhisperState, runID string) error {
@@ -286,6 +298,42 @@ func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatR
 	}
 	if err := postHeartbeatWhisper(ctx, cfg, sender, whisperState, runID, result); err != nil {
 		log.Printf("event=heartbeat_times_post_failed run_id=%s err=%v", runID, err)
+	}
+	return nil
+}
+
+func runAutonomyTurn(ctx context.Context, cfg config.Config, runtime heartbeatRuntime, gateway *discordx.Gateway, whisperState *timesWhisperState, runID string) error {
+	started := time.Now()
+	log.Printf("event=autonomy_tick run_id=%s", runID)
+
+	instructions, err := prompt.LoadWorkspaceInstructions(cfg.Codex.WorkspaceDir)
+	if err != nil {
+		return err
+	}
+	channels, err := gateway.ListChannels(ctx)
+	if err != nil {
+		log.Printf("event=autonomy_list_channels_failed run_id=%s err=%v", runID, err)
+	}
+	userPrompt := buildAutonomyPrompt(channels, cfg.Persona.TimesChannelID)
+	bundle := prompt.BuildHeartbeatBundle(instructions)
+	result, err := runtime.RunTurn(ctx, codex.TurnInput{
+		BaseInstructions:      bundle.BaseInstructions,
+		DeveloperInstructions: bundle.DeveloperInstructions,
+		UserPrompt:            userPrompt,
+	})
+	if err != nil {
+		log.Printf("event=autonomy_turn_failed run_id=%s turn_latency_ms=%d err=%v", runID, durationMS(time.Since(started)), err)
+		return err
+	}
+	log.Printf("event=autonomy_turn_completed run_id=%s status=%s thread=%s turn=%s tool_calls=%d turn_latency_ms=%d", runID, result.Status, result.ThreadID, result.TurnID, len(result.ToolCalls), durationMS(time.Since(started)))
+	if strings.TrimSpace(result.AssistantText) != "" {
+		log.Printf("event=autonomy_assistant_text run_id=%s thread=%s turn=%s text=%q", runID, result.ThreadID, result.TurnID, result.AssistantText)
+	}
+	if strings.TrimSpace(result.ErrorMessage) != "" {
+		log.Printf("event=autonomy_turn_error_detail run_id=%s err=%s", runID, result.ErrorMessage)
+	}
+	if err := postHeartbeatWhisper(ctx, cfg, gateway, whisperState, runID, result); err != nil {
+		log.Printf("event=autonomy_times_post_failed run_id=%s err=%v", runID, err)
 	}
 	return nil
 }
@@ -493,6 +541,58 @@ func postHeartbeatWhisper(ctx context.Context, cfg config.Config, sender heartbe
 	return nil
 }
 
+func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string) string {
+	lines := []string{
+		prompt.HeartbeatSystemPrompt,
+		"",
+		"これは自律観察モードです。",
+		"指定チャンネルを観察し、返信するほどではないが共有価値のある所感は times チャンネルへ send_message で短く投稿してください。",
+		"ownerの最近のX投稿確認には twilog-mcp が利用可能なら優先してください。",
+	}
+	if strings.TrimSpace(timesChannelID) != "" {
+		lines = append(lines, "times_channel_id="+strings.TrimSpace(timesChannelID))
+	}
+	if len(channels) > 0 {
+		items := make([]string, 0, len(channels))
+		for _, ch := range channels {
+			items = append(items, fmt.Sprintf("- %s (%s)", fallbackForLog(ch.Name, "unknown"), ch.ChannelID))
+		}
+		lines = append(lines, "", "観察可能チャンネル:", strings.Join(items, "\n"))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func postMessageWhisper(ctx context.Context, cfg config.Config, sender heartbeatWhisperSender, whisperState *timesWhisperState, runID string, message *discordgo.MessageCreate, channelName string, result codex.TurnResult) error {
+	channelID := strings.TrimSpace(cfg.Persona.TimesChannelID)
+	if channelID == "" || sender == nil {
+		return nil
+	}
+	if message != nil && strings.TrimSpace(message.ChannelID) == channelID {
+		return nil
+	}
+	content, ok := buildMessageWhisperMessage(runID, channelName, result)
+	if !ok {
+		return nil
+	}
+	minInterval := time.Duration(cfg.Persona.TimesMinIntervalS) * time.Second
+	if whisperState != nil && !whisperState.shouldSend(time.Now().UTC(), minInterval) {
+		log.Printf("event=message_times_suppressed run_id=%s channel=%s reason=min_interval", runID, channelID)
+		return nil
+	}
+	if _, err := sender.SendMessage(ctx, channelID, content); err != nil {
+		return err
+	}
+	if whisperState != nil {
+		whisperState.markSent(time.Now().UTC())
+	}
+	if message != nil {
+		log.Printf("event=message_times_posted run_id=%s message=%s channel=%s", runID, message.ID, channelID)
+	} else {
+		log.Printf("event=message_times_posted run_id=%s channel=%s", runID, channelID)
+	}
+	return nil
+}
+
 func buildHeartbeatWhisperMessage(runID string, result codex.TurnResult) (string, bool) {
 	action, summary, hasDecision := heartbeatDecisionSummary(result.AssistantText)
 	errMsg := strings.TrimSpace(result.ErrorMessage)
@@ -532,6 +632,52 @@ func heartbeatDecisionSummary(assistantText string) (action string, summary stri
 	return strings.TrimSpace(decision.Action), strings.TrimSpace(decision.Content), true
 }
 
+func messageDecisionSummary(assistantText string) (action string, summary string, ok bool) {
+	text := strings.TrimSpace(assistantText)
+	if text == "" {
+		return "", "", false
+	}
+	decision, err := codex.ParseDecisionOutput(text)
+	if err != nil {
+		return "", "", false
+	}
+	return strings.TrimSpace(decision.Action), strings.TrimSpace(decision.Content), true
+}
+
+func buildMessageWhisperMessage(runID string, channelName string, result codex.TurnResult) (string, bool) {
+	if hasDeliveryToolCall(result.ToolCalls) {
+		return "", false
+	}
+	errMsg := strings.TrimSpace(result.ErrorMessage)
+	action, summary, hasDecision := messageDecisionSummary(result.AssistantText)
+	if hasDecision && action == "noop" && summary == "" && errMsg == "" {
+		return "", false
+	}
+
+	text := ""
+	if hasDecision {
+		text = strings.TrimSpace(summary)
+	} else {
+		text = strings.TrimSpace(result.AssistantText)
+	}
+	text = trimLogString(text, 140)
+	if text == "" && errMsg == "" {
+		return "", false
+	}
+
+	lines := []string{
+		"ゆるりのつぶやき: 観察メモ",
+		fmt.Sprintf("run=%s channel=%s", runID, fallbackForLog(channelName, "unknown")),
+	}
+	if text != "" {
+		lines = append(lines, "所感="+text)
+	}
+	if errMsg != "" {
+		lines = append(lines, "エラー="+trimLogString(errMsg, 140))
+	}
+	return strings.Join(lines, "\n"), true
+}
+
 func summarizeToolCalls(toolCalls []codex.MCPToolCall, limit int) string {
 	if len(toolCalls) == 0 {
 		return "none"
@@ -556,6 +702,16 @@ func summarizeToolCalls(toolCalls []codex.MCPToolCall, limit int) string {
 		parts = append(parts, name+"("+status+")")
 	}
 	return strings.Join(parts, ", ")
+}
+
+func hasDeliveryToolCall(toolCalls []codex.MCPToolCall) bool {
+	for _, call := range toolCalls {
+		tool := strings.ToLower(strings.TrimSpace(call.Tool))
+		if tool == "send_message" || tool == "reply_message" {
+			return true
+		}
+	}
+	return false
 }
 
 func fallbackForLog(value string, fallback string) string {

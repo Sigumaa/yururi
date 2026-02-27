@@ -166,6 +166,63 @@ func TestRunHeartbeatTurnTimesWhisperRespectsMinInterval(t *testing.T) {
 	}
 }
 
+func TestBuildMessageWhisperMessage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		result  codex.TurnResult
+		wantOK  bool
+		wantHas string
+	}{
+		{
+			name: "skip when delivery exists",
+			result: codex.TurnResult{
+				ToolCalls:     []codex.MCPToolCall{{Tool: "reply_message"}},
+				AssistantText: "anything",
+			},
+			wantOK: false,
+		},
+		{
+			name: "post plain assistant text",
+			result: codex.TurnResult{
+				AssistantText: "この話題は返信不要だけど自分は賛成です",
+			},
+			wantOK:  true,
+			wantHas: "所感=",
+		},
+		{
+			name: "skip noop decision",
+			result: codex.TurnResult{
+				AssistantText: `{"action":"noop"}`,
+			},
+			wantOK: false,
+		},
+		{
+			name: "post error",
+			result: codex.TurnResult{
+				ErrorMessage: "network error",
+			},
+			wantOK:  true,
+			wantHas: "エラー=",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			content, ok := buildMessageWhisperMessage("run-1", "chat", tc.result)
+			if ok != tc.wantOK {
+				t.Fatalf("buildMessageWhisperMessage() ok = %v, want %v", ok, tc.wantOK)
+			}
+			if tc.wantHas != "" && !strings.Contains(content, tc.wantHas) {
+				t.Fatalf("content = %q, want contains %q", content, tc.wantHas)
+			}
+		})
+	}
+}
+
 func TestTrimLogString(t *testing.T) {
 	t.Parallel()
 

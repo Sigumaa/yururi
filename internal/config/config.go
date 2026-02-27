@@ -33,6 +33,7 @@ type Config struct {
 	Codex     CodexConfig     `yaml:"codex"`
 	MCP       MCPConfig       `yaml:"mcp"`
 	Heartbeat HeartbeatConfig `yaml:"heartbeat"`
+	Autonomy  AutonomyConfig  `yaml:"autonomy"`
 	XAI       XAIConfig       `yaml:"xai"`
 }
 
@@ -40,6 +41,7 @@ type DiscordConfig struct {
 	Token              string   `yaml:"token"`
 	GuildID            string   `yaml:"guild_id"`
 	TargetChannelIDs   []string `yaml:"target_channel_ids"`
+	ObserveChannelIDs  []string `yaml:"observe_channel_ids"`
 	ExcludedChannelIDs []string `yaml:"excluded_channel_ids"`
 	AllowedBotUserIDs  []string `yaml:"allowed_bot_user_ids"`
 }
@@ -51,14 +53,22 @@ type PersonaConfig struct {
 }
 
 type CodexConfig struct {
-	Command         string   `yaml:"command"`
-	Args            []string `yaml:"args"`
-	Model           string   `yaml:"model"`
-	ReasoningEffort string   `yaml:"reasoning_effort"`
-	WorkspaceDir    string   `yaml:"workspace_dir"`
-	CWD             string   `yaml:"cwd"`
-	HomeDir         string   `yaml:"home_dir"`
-	Home            string   `yaml:"home"`
+	Command         string                          `yaml:"command"`
+	Args            []string                        `yaml:"args"`
+	Model           string                          `yaml:"model"`
+	ReasoningEffort string                          `yaml:"reasoning_effort"`
+	WorkspaceDir    string                          `yaml:"workspace_dir"`
+	CWD             string                          `yaml:"cwd"`
+	HomeDir         string                          `yaml:"home_dir"`
+	Home            string                          `yaml:"home"`
+	MCPServers      map[string]CodexMCPServerConfig `yaml:"mcp_servers"`
+}
+
+type CodexMCPServerConfig struct {
+	URL     string            `yaml:"url"`
+	Command string            `yaml:"command"`
+	Args    []string          `yaml:"args"`
+	Headers map[string]string `yaml:"headers"`
 }
 
 type MCPConfig struct {
@@ -86,6 +96,12 @@ type XAIConfig struct {
 	TimeoutSec int    `yaml:"timeout_sec"`
 }
 
+type AutonomyConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Cron     string `yaml:"cron"`
+	Timezone string `yaml:"timezone"`
+}
+
 var (
 	currentMCPToolPolicyMu sync.RWMutex
 	currentMCPToolPolicy   MCPToolPolicyConfig
@@ -106,6 +122,10 @@ func Load(path string) (Config, error) {
 			Enabled:  true,
 			Cron:     defaultHeartbeatCron,
 			Timezone: defaultHeartbeatTimezone,
+		},
+		Autonomy: AutonomyConfig{
+			Enabled: false,
+			Cron:    defaultHeartbeatCron,
 		},
 		XAI: XAIConfig{
 			Enabled:    false,
@@ -171,6 +191,11 @@ func (c Config) Validate() error {
 			return errors.New("heartbeat.timezone is required when heartbeat.enabled=true")
 		}
 	}
+	if c.Autonomy.Enabled {
+		if c.Autonomy.Cron == "" {
+			return errors.New("autonomy.cron is required when autonomy.enabled=true")
+		}
+	}
 	if c.XAI.Enabled {
 		if c.XAI.APIKey == "" {
 			return errors.New("xai.api_key is required when xai.enabled=true")
@@ -193,9 +218,31 @@ func (c *Config) normalize() {
 	if c.Codex.HomeDir != "" {
 		c.Codex.HomeDir = filepath.Clean(c.Codex.HomeDir)
 	}
+	for name, server := range c.Codex.MCPServers {
+		normalized := CodexMCPServerConfig{
+			URL:     strings.TrimSpace(server.URL),
+			Command: strings.TrimSpace(server.Command),
+			Args:    cleanList(server.Args),
+		}
+		if len(server.Headers) > 0 {
+			normalized.Headers = make(map[string]string, len(server.Headers))
+			for k, v := range server.Headers {
+				key := strings.TrimSpace(k)
+				val := strings.TrimSpace(v)
+				if key == "" || val == "" {
+					continue
+				}
+				normalized.Headers[key] = val
+			}
+		}
+		c.Codex.MCPServers[name] = normalized
+	}
 
 	if strings.TrimSpace(c.MCP.URL) == "" {
 		c.MCP.URL = "http://" + c.MCP.Bind + "/mcp"
+	}
+	if strings.TrimSpace(c.Autonomy.Timezone) == "" {
+		c.Autonomy.Timezone = c.Heartbeat.Timezone
 	}
 	if strings.TrimSpace(c.XAI.BaseURL) == "" {
 		c.XAI.BaseURL = defaultXAIBaseURL
@@ -210,6 +257,10 @@ func (c *Config) normalize() {
 	if c.XAI.TimeoutSec <= 0 {
 		c.XAI.TimeoutSec = defaultXAITimeoutSec
 	}
+	c.Discord.TargetChannelIDs = cleanList(c.Discord.TargetChannelIDs)
+	c.Discord.ObserveChannelIDs = cleanList(c.Discord.ObserveChannelIDs)
+	c.Discord.ExcludedChannelIDs = cleanList(c.Discord.ExcludedChannelIDs)
+	c.Discord.AllowedBotUserIDs = cleanList(c.Discord.AllowedBotUserIDs)
 	c.MCP.ToolPolicy.AllowPatterns = cleanList(c.MCP.ToolPolicy.AllowPatterns)
 	c.MCP.ToolPolicy.DenyPatterns = cleanList(c.MCP.ToolPolicy.DenyPatterns)
 	if c.Persona.TimesMinIntervalS < 0 {
@@ -232,6 +283,7 @@ func applyEnvOverrides(cfg *Config) {
 	applyString("DISCORD_TOKEN", &cfg.Discord.Token)
 	applyString("DISCORD_GUILD_ID", &cfg.Discord.GuildID)
 	applyList("DISCORD_TARGET_CHANNEL_IDS", &cfg.Discord.TargetChannelIDs)
+	applyList("DISCORD_OBSERVE_CHANNEL_IDS", &cfg.Discord.ObserveChannelIDs)
 	applyList("DISCORD_EXCLUDED_CHANNEL_IDS", &cfg.Discord.ExcludedChannelIDs)
 	applyList("DISCORD_ALLOWED_BOT_USER_IDS", &cfg.Discord.AllowedBotUserIDs)
 	applyString("PERSONA_OWNER_USER_ID", &cfg.Persona.OwnerUserID)
@@ -255,6 +307,11 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	applyString("HEARTBEAT_CRON", &cfg.Heartbeat.Cron)
 	applyString("HEARTBEAT_TIMEZONE", &cfg.Heartbeat.Timezone)
+	if v, ok := os.LookupEnv("AUTONOMY_ENABLED"); ok {
+		cfg.Autonomy.Enabled = parseBool(v, cfg.Autonomy.Enabled)
+	}
+	applyString("AUTONOMY_CRON", &cfg.Autonomy.Cron)
+	applyString("AUTONOMY_TIMEZONE", &cfg.Autonomy.Timezone)
 	if v, ok := os.LookupEnv("XAI_ENABLED"); ok {
 		cfg.XAI.Enabled = parseBool(v, cfg.XAI.Enabled)
 	}
@@ -266,6 +323,18 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v, ok := os.LookupEnv("PERSONA_TIMES_MIN_INTERVAL_SEC"); ok {
 		cfg.Persona.TimesMinIntervalS = parseInt(v, cfg.Persona.TimesMinIntervalS)
+	}
+	if v, ok := os.LookupEnv("CODEX_MCP_TWILOG_BEARER_TOKEN"); ok {
+		name := "twilog-mcp"
+		server := cfg.Codex.MCPServers[name]
+		token := strings.TrimSpace(v)
+		if token != "" {
+			if server.Headers == nil {
+				server.Headers = map[string]string{}
+			}
+			server.Headers["Authorization"] = "Bearer " + token
+			cfg.Codex.MCPServers[name] = server
+		}
 	}
 }
 
