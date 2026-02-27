@@ -91,6 +91,7 @@
 6. 最終`DecisionResult`反映。
 7. typing停止・メタログ出力。
 8. heartbeat時は`HEARTBEAT.md`の指示に従って必要時のみ行動する。
+9. heartbeat実行ログには`assistant_text`、decision要約（parse可否含む）、tool call詳細（server/tool/status/arguments/result）を出力する。
 
 ## 制約と運用ルール
 1. 指定チャンネル外では動作しない。
