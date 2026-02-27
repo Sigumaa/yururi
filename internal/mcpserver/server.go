@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -148,6 +149,8 @@ type WorkspaceDocResult struct {
 	Content string `json:"content"`
 }
 
+const maxMCPToolLogValueLen = 280
+
 func New(bind string, defaultTimezone string, workspaceDir string, discord *discordx.Gateway, xaiClient *xai.Client, policyOverrides ...config.MCPToolPolicyConfig) (*Server, error) {
 	bind = strings.TrimSpace(bind)
 	if bind == "" {
@@ -233,6 +236,20 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
+func logMCPToolStart(toolName string, args any) time.Time {
+	started := time.Now()
+	log.Printf("event=mcp_tool_started tool=%s args=%q", toolName, trimLogAny(args, maxMCPToolLogValueLen))
+	return started
+}
+
+func logMCPToolFailed(toolName string, started time.Time, err error) {
+	log.Printf("event=mcp_tool_failed tool=%s latency_ms=%d err=%v", toolName, durationMS(time.Since(started)), err)
+}
+
+func logMCPToolCompleted(toolName string, started time.Time, result any) {
+	log.Printf("event=mcp_tool_completed tool=%s latency_ms=%d result=%q", toolName, durationMS(time.Since(started)), trimLogAny(result, maxMCPToolLogValueLen))
+}
+
 func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "read_message_history",
@@ -298,11 +315,14 @@ func (s *Server) registerTools() {
 }
 
 func (s *Server) handleReadMessageHistory(ctx context.Context, _ *mcp.CallToolRequest, args ReadHistoryArgs) (*mcp.CallToolResult, ReadHistoryResult, error) {
+	started := logMCPToolStart("read_message_history", args)
 	if err := s.enforceToolPolicy("read_message_history"); err != nil {
+		logMCPToolFailed("read_message_history", started, err)
 		return nil, ReadHistoryResult{}, err
 	}
 	messages, err := s.discord.ReadMessageHistory(ctx, args.ChannelID, args.BeforeMessageID, args.Limit)
 	if err != nil {
+		logMCPToolFailed("read_message_history", started, err)
 		return nil, ReadHistoryResult{}, err
 	}
 	out := make([]HistoryMessage, 0, len(messages))
@@ -318,43 +338,62 @@ func (s *Server) handleReadMessageHistory(ctx context.Context, _ *mcp.CallToolRe
 			CreatedAt:   msg.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	return nil, ReadHistoryResult{Messages: out}, nil
+	result := ReadHistoryResult{Messages: out}
+	logMCPToolCompleted("read_message_history", started, result)
+	return nil, result, nil
 }
 
 func (s *Server) handleSendMessage(ctx context.Context, _ *mcp.CallToolRequest, args SendMessageArgs) (*mcp.CallToolResult, MessageResult, error) {
+	started := logMCPToolStart("send_message", args)
 	if err := s.enforceToolPolicy("send_message"); err != nil {
+		logMCPToolFailed("send_message", started, err)
 		return nil, MessageResult{}, err
 	}
 	id, err := s.discord.SendMessage(ctx, args.ChannelID, args.Content)
 	if err != nil {
+		logMCPToolFailed("send_message", started, err)
 		return nil, MessageResult{}, err
 	}
-	return nil, MessageResult{MessageID: id}, nil
+	result := MessageResult{MessageID: id}
+	logMCPToolCompleted("send_message", started, result)
+	return nil, result, nil
 }
 
 func (s *Server) handleReplyMessage(ctx context.Context, _ *mcp.CallToolRequest, args ReplyMessageArgs) (*mcp.CallToolResult, MessageResult, error) {
+	started := logMCPToolStart("reply_message", args)
 	if err := s.enforceToolPolicy("reply_message"); err != nil {
+		logMCPToolFailed("reply_message", started, err)
 		return nil, MessageResult{}, err
 	}
 	id, err := s.discord.ReplyMessage(ctx, args.ChannelID, args.ReplyToMessageID, args.Content)
 	if err != nil {
+		logMCPToolFailed("reply_message", started, err)
 		return nil, MessageResult{}, err
 	}
-	return nil, MessageResult{MessageID: id}, nil
+	result := MessageResult{MessageID: id}
+	logMCPToolCompleted("reply_message", started, result)
+	return nil, result, nil
 }
 
 func (s *Server) handleAddReaction(ctx context.Context, _ *mcp.CallToolRequest, args AddReactionArgs) (*mcp.CallToolResult, SimpleOK, error) {
+	started := logMCPToolStart("add_reaction", args)
 	if err := s.enforceToolPolicy("add_reaction"); err != nil {
+		logMCPToolFailed("add_reaction", started, err)
 		return nil, SimpleOK{}, err
 	}
 	if err := s.discord.AddReaction(ctx, args.ChannelID, args.MessageID, args.Emoji); err != nil {
+		logMCPToolFailed("add_reaction", started, err)
 		return nil, SimpleOK{}, err
 	}
-	return nil, SimpleOK{OK: true}, nil
+	result := SimpleOK{OK: true}
+	logMCPToolCompleted("add_reaction", started, result)
+	return nil, result, nil
 }
 
 func (s *Server) handleStartTyping(ctx context.Context, _ *mcp.CallToolRequest, args StartTypingArgs) (*mcp.CallToolResult, SimpleOK, error) {
+	started := logMCPToolStart("start_typing", args)
 	if err := s.enforceToolPolicy("start_typing"); err != nil {
+		logMCPToolFailed("start_typing", started, err)
 		return nil, SimpleOK{}, err
 	}
 	duration := 10 * time.Second
@@ -362,42 +401,56 @@ func (s *Server) handleStartTyping(ctx context.Context, _ *mcp.CallToolRequest, 
 		duration = time.Duration(args.DurationSec) * time.Second
 	}
 	s.discord.StartTyping(ctx, args.ChannelID, duration)
-	return nil, SimpleOK{OK: true}, nil
+	result := SimpleOK{OK: true}
+	logMCPToolCompleted("start_typing", started, result)
+	return nil, result, nil
 }
 
 func (s *Server) handleListChannels(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyArgs) (*mcp.CallToolResult, ListChannelsResult, error) {
+	started := logMCPToolStart("list_channels", EmptyArgs{})
 	if err := s.enforceToolPolicy("list_channels"); err != nil {
+		logMCPToolFailed("list_channels", started, err)
 		return nil, ListChannelsResult{}, err
 	}
 	channels, err := s.discord.ListChannels(ctx)
 	if err != nil {
+		logMCPToolFailed("list_channels", started, err)
 		return nil, ListChannelsResult{}, err
 	}
 	out := make([]ChannelItem, 0, len(channels))
 	for _, c := range channels {
 		out = append(out, ChannelItem{ChannelID: c.ChannelID, Name: c.Name})
 	}
-	return nil, ListChannelsResult{Channels: out}, nil
+	result := ListChannelsResult{Channels: out}
+	logMCPToolCompleted("list_channels", started, result)
+	return nil, result, nil
 }
 
 func (s *Server) handleGetUserDetail(ctx context.Context, _ *mcp.CallToolRequest, args UserDetailArgs) (*mcp.CallToolResult, UserDetailResult, error) {
+	started := logMCPToolStart("get_user_detail", args)
 	if err := s.enforceToolPolicy("get_user_detail"); err != nil {
+		logMCPToolFailed("get_user_detail", started, err)
 		return nil, UserDetailResult{}, err
 	}
 	user, err := s.discord.GetUserDetail(ctx, args.ChannelID, args.UserID)
 	if err != nil {
+		logMCPToolFailed("get_user_detail", started, err)
 		return nil, UserDetailResult{}, err
 	}
-	return nil, UserDetailResult{
+	result := UserDetailResult{
 		UserID:      user.UserID,
 		Username:    user.Username,
 		DisplayName: user.DisplayName,
 		Nick:        user.Nick,
-	}, nil
+	}
+	logMCPToolCompleted("get_user_detail", started, result)
+	return nil, result, nil
 }
 
 func (s *Server) handleGetCurrentTime(_ context.Context, _ *mcp.CallToolRequest, args CurrentTimeArgs) (*mcp.CallToolResult, CurrentTimeResult, error) {
+	started := logMCPToolStart("get_current_time", args)
 	if err := s.enforceToolPolicy("get_current_time"); err != nil {
+		logMCPToolFailed("get_current_time", started, err)
 		return nil, CurrentTimeResult{}, err
 	}
 	tz := strings.TrimSpace(args.Timezone)
@@ -406,22 +459,29 @@ func (s *Server) handleGetCurrentTime(_ context.Context, _ *mcp.CallToolRequest,
 	}
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
+		logMCPToolFailed("get_current_time", started, err)
 		return nil, CurrentTimeResult{}, fmt.Errorf("invalid timezone %q: %w", tz, err)
 	}
 	now := time.Now().In(loc)
-	return nil, CurrentTimeResult{
+	result := CurrentTimeResult{
 		Timezone:       loc.String(),
 		CurrentUnix:    now.Unix(),
 		CurrentRFC3339: now.Format(time.RFC3339),
-	}, nil
+	}
+	logMCPToolCompleted("get_current_time", started, result)
+	return nil, result, nil
 }
 
 func (s *Server) handleXSearch(ctx context.Context, _ *mcp.CallToolRequest, args XSearchArgs) (*mcp.CallToolResult, XSearchResult, error) {
+	started := logMCPToolStart("x_search", args)
 	if err := s.enforceToolPolicy("x_search"); err != nil {
+		logMCPToolFailed("x_search", started, err)
 		return nil, XSearchResult{}, err
 	}
 	if s.xai == nil {
-		return nil, XSearchResult{}, errors.New("x_search is disabled")
+		err := errors.New("x_search is disabled")
+		logMCPToolFailed("x_search", started, err)
+		return nil, XSearchResult{}, err
 	}
 	result, err := s.xai.Query(ctx, args.Query, xai.SearchOptions{
 		AllowedXHandles:          args.AllowedXHandles,
@@ -432,22 +492,28 @@ func (s *Server) handleXSearch(ctx context.Context, _ *mcp.CallToolRequest, args
 		EnableVideoUnderstanding: args.EnableVideoUnderstanding,
 	})
 	if err != nil {
+		logMCPToolFailed("x_search", started, err)
 		return nil, XSearchResult{}, err
 	}
-	return nil, XSearchResult{
+	out := XSearchResult{
 		Text:       result.Text,
 		Citations:  result.Citations,
 		ResponseID: result.ResponseID,
 		Model:      result.Model,
-	}, nil
+	}
+	logMCPToolCompleted("x_search", started, out)
+	return nil, out, nil
 }
 
 func (s *Server) handleReadWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
+	started := logMCPToolStart("read_workspace_doc", args)
 	if err := s.enforceToolPolicy("read_workspace_doc"); err != nil {
+		logMCPToolFailed("read_workspace_doc", started, err)
 		return nil, WorkspaceDocResult{}, err
 	}
 	path, err := s.workspaceDocPath(args.Name)
 	if err != nil {
+		logMCPToolFailed("read_workspace_doc", started, err)
 		return nil, WorkspaceDocResult{}, err
 	}
 
@@ -456,22 +522,30 @@ func (s *Server) handleReadWorkspaceDoc(_ context.Context, _ *mcp.CallToolReques
 
 	body, err := os.ReadFile(path)
 	if err != nil {
+		logMCPToolFailed("read_workspace_doc", started, err)
 		return nil, WorkspaceDocResult{}, fmt.Errorf("read workspace doc: %w", err)
 	}
-	return nil, WorkspaceDocResult{Name: filepath.Base(path), Path: path, Content: string(body)}, nil
+	result := WorkspaceDocResult{Name: filepath.Base(path), Path: path, Content: string(body)}
+	logMCPToolCompleted("read_workspace_doc", started, result)
+	return nil, result, nil
 }
 
 func (s *Server) handleAppendWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocWriteArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
+	started := logMCPToolStart("append_workspace_doc", args)
 	if err := s.enforceToolPolicy("append_workspace_doc"); err != nil {
+		logMCPToolFailed("append_workspace_doc", started, err)
 		return nil, WorkspaceDocResult{}, err
 	}
 	path, err := s.workspaceDocPath(args.Name)
 	if err != nil {
+		logMCPToolFailed("append_workspace_doc", started, err)
 		return nil, WorkspaceDocResult{}, err
 	}
 	content := strings.TrimSpace(args.Content)
 	if content == "" {
-		return nil, WorkspaceDocResult{}, errors.New("content is required")
+		err := errors.New("content is required")
+		logMCPToolFailed("append_workspace_doc", started, err)
+		return nil, WorkspaceDocResult{}, err
 	}
 
 	s.docMu.Lock()
@@ -479,6 +553,7 @@ func (s *Server) handleAppendWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequ
 
 	existing, readErr := os.ReadFile(path)
 	if readErr != nil {
+		logMCPToolFailed("append_workspace_doc", started, readErr)
 		return nil, WorkspaceDocResult{}, fmt.Errorf("read workspace doc: %w", readErr)
 	}
 	builder := strings.Builder{}
@@ -492,22 +567,30 @@ func (s *Server) handleAppendWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequ
 
 	final := builder.String()
 	if err := os.WriteFile(path, []byte(final), 0o644); err != nil {
+		logMCPToolFailed("append_workspace_doc", started, err)
 		return nil, WorkspaceDocResult{}, fmt.Errorf("append workspace doc: %w", err)
 	}
-	return nil, WorkspaceDocResult{Name: filepath.Base(path), Path: path, Content: final}, nil
+	result := WorkspaceDocResult{Name: filepath.Base(path), Path: path, Content: final}
+	logMCPToolCompleted("append_workspace_doc", started, result)
+	return nil, result, nil
 }
 
 func (s *Server) handleReplaceWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocWriteArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
+	started := logMCPToolStart("replace_workspace_doc", args)
 	if err := s.enforceToolPolicy("replace_workspace_doc"); err != nil {
+		logMCPToolFailed("replace_workspace_doc", started, err)
 		return nil, WorkspaceDocResult{}, err
 	}
 	path, err := s.workspaceDocPath(args.Name)
 	if err != nil {
+		logMCPToolFailed("replace_workspace_doc", started, err)
 		return nil, WorkspaceDocResult{}, err
 	}
 	content := strings.TrimSpace(args.Content)
 	if content == "" {
-		return nil, WorkspaceDocResult{}, errors.New("content is required")
+		err := errors.New("content is required")
+		logMCPToolFailed("replace_workspace_doc", started, err)
+		return nil, WorkspaceDocResult{}, err
 	}
 
 	s.docMu.Lock()
@@ -515,9 +598,12 @@ func (s *Server) handleReplaceWorkspaceDoc(_ context.Context, _ *mcp.CallToolReq
 
 	final := content + "\n"
 	if err := os.WriteFile(path, []byte(final), 0o644); err != nil {
+		logMCPToolFailed("replace_workspace_doc", started, err)
 		return nil, WorkspaceDocResult{}, fmt.Errorf("replace workspace doc: %w", err)
 	}
-	return nil, WorkspaceDocResult{Name: filepath.Base(path), Path: path, Content: final}, nil
+	result := WorkspaceDocResult{Name: filepath.Base(path), Path: path, Content: final}
+	logMCPToolCompleted("replace_workspace_doc", started, result)
+	return nil, result, nil
 }
 
 func (s *Server) workspaceDocPath(name string) (string, error) {
@@ -537,6 +623,40 @@ func (s *Server) enforceToolPolicy(toolName string) error {
 	}
 	log.Printf("mcp tool denied: tool=%s reason=%q", toolName, reason)
 	return fmt.Errorf("%w: tool=%s reason=%s", ErrToolDenied, toolName, reason)
+}
+
+func durationMS(d time.Duration) int64 {
+	return d.Milliseconds()
+}
+
+func trimLogAny(value any, maxLen int) string {
+	if value == nil {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return trimLogString(v, maxLen)
+	}
+	body, err := json.Marshal(value)
+	if err == nil {
+		return trimLogString(string(body), maxLen)
+	}
+	return trimLogString(fmt.Sprintf("%v", value), maxLen)
+}
+
+func trimLogString(text string, maxLen int) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || maxLen <= 0 {
+		return trimmed
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= maxLen {
+		return trimmed
+	}
+	if maxLen <= 3 {
+		return string(runes[:maxLen])
+	}
+	return string(runes[:maxLen-3]) + "..."
 }
 
 type toolPolicy struct {

@@ -68,7 +68,7 @@ func main() {
 	} else {
 		added := len(resolvedObserve) - len(cfg.Discord.ObserveChannelIDs)
 		cfg.Discord.ObserveChannelIDs = resolvedObserve
-		if added > 0 {
+		if len(cfg.Discord.ObserveCategoryIDs) > 0 {
 			log.Printf("event=observe_categories_resolved guild=%s categories=%d observe_channels=%d added=%d", cfg.Discord.GuildID, len(cfg.Discord.ObserveCategoryIDs), len(cfg.Discord.ObserveChannelIDs), added)
 		}
 	}
@@ -245,6 +245,10 @@ func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orch
 	}
 	if strings.TrimSpace(result.AssistantText) != "" {
 		log.Printf("event=assistant_text run_id=%s message=%s thread=%s turn=%s text=%q", runID, m.ID, result.ThreadID, result.TurnID, result.AssistantText)
+		logDecisionSummary("message", runID, result.ThreadID, result.TurnID, result.AssistantText)
+	}
+	for i, toolCall := range result.ToolCalls {
+		logTurnToolCall("message", runID, result.ThreadID, result.TurnID, i, toolCall)
 	}
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=codex_turn_error_detail run_id=%s message=%s err=%s", runID, m.ID, result.ErrorMessage)
@@ -275,35 +279,10 @@ func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatR
 	log.Printf("event=heartbeat_turn_completed run_id=%s status=%s thread=%s turn=%s tool_calls=%d turn_latency_ms=%d", runID, result.Status, result.ThreadID, result.TurnID, len(result.ToolCalls), durationMS(time.Since(started)))
 	if assistantText := strings.TrimSpace(result.AssistantText); assistantText != "" {
 		log.Printf("event=heartbeat_assistant_text run_id=%s thread=%s turn=%s text=%q", runID, result.ThreadID, result.TurnID, assistantText)
-		if maybeDecisionOutput(assistantText) {
-			decision, err := codex.ParseDecisionOutput(assistantText)
-			if err != nil {
-				log.Printf("event=heartbeat_decision_parse_failed run_id=%s thread=%s turn=%s err=%v", runID, result.ThreadID, result.TurnID, err)
-			} else {
-				log.Printf(
-					"event=heartbeat_decision_summary run_id=%s thread=%s turn=%s action=%s content=%q",
-					runID,
-					result.ThreadID,
-					result.TurnID,
-					decision.Action,
-					trimLogString(decision.Content, maxHeartbeatLogValueLen),
-				)
-			}
-		}
+		logDecisionSummary("heartbeat", runID, result.ThreadID, result.TurnID, assistantText)
 	}
 	for i, toolCall := range result.ToolCalls {
-		log.Printf(
-			"event=heartbeat_tool_call run_id=%s thread=%s turn=%s index=%d server=%s tool=%s status=%s arguments=%q result=%q",
-			runID,
-			result.ThreadID,
-			result.TurnID,
-			i,
-			toolCall.Server,
-			toolCall.Tool,
-			toolCall.Status,
-			trimLogAny(toolCall.Arguments, maxHeartbeatLogValueLen),
-			trimLogAny(toolCall.Result, maxHeartbeatLogValueLen),
-		)
+		logTurnToolCall("heartbeat", runID, result.ThreadID, result.TurnID, i, toolCall)
 	}
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=heartbeat_turn_error_detail run_id=%s err=%s", runID, result.ErrorMessage)
@@ -338,8 +317,12 @@ func runAutonomyTurn(ctx context.Context, cfg config.Config, runtime heartbeatRu
 		return err
 	}
 	log.Printf("event=autonomy_turn_completed run_id=%s status=%s thread=%s turn=%s tool_calls=%d turn_latency_ms=%d", runID, result.Status, result.ThreadID, result.TurnID, len(result.ToolCalls), durationMS(time.Since(started)))
-	if strings.TrimSpace(result.AssistantText) != "" {
-		log.Printf("event=autonomy_assistant_text run_id=%s thread=%s turn=%s text=%q", runID, result.ThreadID, result.TurnID, result.AssistantText)
+	if assistantText := strings.TrimSpace(result.AssistantText); assistantText != "" {
+		log.Printf("event=autonomy_assistant_text run_id=%s thread=%s turn=%s text=%q", runID, result.ThreadID, result.TurnID, assistantText)
+		logDecisionSummary("autonomy", runID, result.ThreadID, result.TurnID, assistantText)
+	}
+	for i, toolCall := range result.ToolCalls {
+		logTurnToolCall("autonomy", runID, result.ThreadID, result.TurnID, i, toolCall)
 	}
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=autonomy_turn_error_detail run_id=%s err=%s", runID, result.ErrorMessage)
@@ -685,6 +668,43 @@ func hasDeliveryToolCall(toolCalls []codex.MCPToolCall) bool {
 		}
 	}
 	return false
+}
+
+func logDecisionSummary(eventPrefix string, runID string, threadID string, turnID string, assistantText string) {
+	text := strings.TrimSpace(assistantText)
+	if !maybeDecisionOutput(text) {
+		return
+	}
+	decision, err := codex.ParseDecisionOutput(text)
+	if err != nil {
+		log.Printf("event=%s_decision_parse_failed run_id=%s thread=%s turn=%s err=%v", eventPrefix, runID, threadID, turnID, err)
+		return
+	}
+	log.Printf(
+		"event=%s_decision_summary run_id=%s thread=%s turn=%s action=%s content=%q",
+		eventPrefix,
+		runID,
+		threadID,
+		turnID,
+		decision.Action,
+		trimLogString(decision.Content, maxHeartbeatLogValueLen),
+	)
+}
+
+func logTurnToolCall(eventPrefix string, runID string, threadID string, turnID string, index int, toolCall codex.MCPToolCall) {
+	log.Printf(
+		"event=%s_tool_call run_id=%s thread=%s turn=%s index=%d server=%s tool=%s status=%s arguments=%q result=%q",
+		eventPrefix,
+		runID,
+		threadID,
+		turnID,
+		index,
+		toolCall.Server,
+		toolCall.Tool,
+		toolCall.Status,
+		trimLogAny(toolCall.Arguments, maxHeartbeatLogValueLen),
+		trimLogAny(toolCall.Result, maxHeartbeatLogValueLen),
+	)
 }
 
 func resolveObserveTextChannels(session *discordgo.Session, discordCfg config.DiscordConfig) ([]string, error) {
