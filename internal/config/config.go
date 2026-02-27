@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -55,8 +56,14 @@ type CodexConfig struct {
 }
 
 type MCPConfig struct {
-	Bind string `yaml:"bind"`
-	URL  string `yaml:"url"`
+	Bind       string              `yaml:"bind"`
+	URL        string              `yaml:"url"`
+	ToolPolicy MCPToolPolicyConfig `yaml:"tool_policy"`
+}
+
+type MCPToolPolicyConfig struct {
+	AllowPatterns []string `yaml:"allow_patterns"`
+	DenyPatterns  []string `yaml:"deny_patterns"`
 }
 
 type HeartbeatConfig struct {
@@ -68,6 +75,11 @@ type HeartbeatConfig struct {
 type MemoryConfig struct {
 	RootDir string `yaml:"root_dir"`
 }
+
+var (
+	currentMCPToolPolicyMu sync.RWMutex
+	currentMCPToolPolicy   MCPToolPolicyConfig
+)
 
 func Load(path string) (Config, error) {
 	cfg := Config{
@@ -100,7 +112,17 @@ func Load(path string) (Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
+	setCurrentMCPToolPolicy(cfg.MCP.ToolPolicy)
 	return cfg, nil
+}
+
+func CurrentMCPToolPolicy() MCPToolPolicyConfig {
+	currentMCPToolPolicyMu.RLock()
+	defer currentMCPToolPolicyMu.RUnlock()
+	return MCPToolPolicyConfig{
+		AllowPatterns: append([]string(nil), currentMCPToolPolicy.AllowPatterns...),
+		DenyPatterns:  append([]string(nil), currentMCPToolPolicy.DenyPatterns...),
+	}
 }
 
 func (c Config) Validate() error {
@@ -157,6 +179,8 @@ func (c *Config) normalize() {
 	if strings.TrimSpace(c.MCP.URL) == "" {
 		c.MCP.URL = "http://" + c.MCP.Bind + "/mcp"
 	}
+	c.MCP.ToolPolicy.AllowPatterns = cleanList(c.MCP.ToolPolicy.AllowPatterns)
+	c.MCP.ToolPolicy.DenyPatterns = cleanList(c.MCP.ToolPolicy.DenyPatterns)
 
 	if strings.TrimSpace(c.Memory.RootDir) == "" {
 		base := c.Codex.WorkspaceDir
@@ -197,6 +221,8 @@ func applyEnvOverrides(cfg *Config) {
 	applyString("CODEX_HOME_DIR", &cfg.Codex.HomeDir)
 	applyString("MCP_BIND", &cfg.MCP.Bind)
 	applyString("MCP_URL", &cfg.MCP.URL)
+	applyList("MCP_TOOL_POLICY_ALLOW_PATTERNS", &cfg.MCP.ToolPolicy.AllowPatterns)
+	applyList("MCP_TOOL_POLICY_DENY_PATTERNS", &cfg.MCP.ToolPolicy.DenyPatterns)
 	if v, ok := os.LookupEnv("HEARTBEAT_ENABLED"); ok {
 		cfg.Heartbeat.Enabled = parseBool(v, cfg.Heartbeat.Enabled)
 	}
@@ -245,5 +271,14 @@ func parseBool(raw string, fallback bool) bool {
 		return false
 	default:
 		return fallback
+	}
+}
+
+func setCurrentMCPToolPolicy(policy MCPToolPolicyConfig) {
+	currentMCPToolPolicyMu.Lock()
+	defer currentMCPToolPolicyMu.Unlock()
+	currentMCPToolPolicy = MCPToolPolicyConfig{
+		AllowPatterns: append([]string(nil), policy.AllowPatterns...),
+		DenyPatterns:  append([]string(nil), policy.DenyPatterns...),
 	}
 }

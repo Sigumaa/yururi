@@ -17,6 +17,9 @@ codex:
 mcp:
   bind: "127.0.0.1:39393"
   url: "http://127.0.0.1:39393/mcp"
+  tool_policy:
+    allow_patterns: []
+    deny_patterns: []
 heartbeat:
   enabled: true
   cron: "0 */30 * * * *"

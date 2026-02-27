@@ -31,10 +31,14 @@ Discord向け自律エージェント「ゆるり」。
 - `codex.home_dir`
 - `mcp.bind`
 - `mcp.url`
+- `mcp.tool_policy.allow_patterns[]`
+- `mcp.tool_policy.deny_patterns[]`
 - `heartbeat.enabled`
 - `heartbeat.cron`
 - `heartbeat.timezone`
 - `memory.root_dir`
+
+`mcp.tool_policy.*` は `*` ワイルドカード対応、大小文字を区別しない。
 
 ## 起動
 

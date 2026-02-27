@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/sigumaa/yururi/internal/config"
 	"github.com/sigumaa/yururi/internal/discordx"
 	"github.com/sigumaa/yururi/internal/memory"
 )
@@ -20,12 +22,15 @@ type Server struct {
 	bind            string
 	defaultTimezone string
 	workspaceDir    string
+	toolPolicy      toolPolicy
 	discord         *discordx.Gateway
 	memory          *memory.Store
 	mcpServer       *mcp.Server
 	httpServer      *http.Server
 	docMu           sync.Mutex
 }
+
+var ErrToolDenied = errors.New("mcp tool denied by policy")
 
 type EmptyArgs struct{}
 
@@ -172,7 +177,7 @@ type WorkspaceDocResult struct {
 	Content string `json:"content"`
 }
 
-func New(bind string, defaultTimezone string, workspaceDir string, discord *discordx.Gateway, store *memory.Store) (*Server, error) {
+func New(bind string, defaultTimezone string, workspaceDir string, discord *discordx.Gateway, store *memory.Store, policyOverrides ...config.MCPToolPolicyConfig) (*Server, error) {
 	bind = strings.TrimSpace(bind)
 	if bind == "" {
 		return nil, errors.New("mcp bind is required")
@@ -193,6 +198,10 @@ func New(bind string, defaultTimezone string, workspaceDir string, discord *disc
 	if strings.TrimSpace(defaultTimezone) == "" {
 		defaultTimezone = "Asia/Tokyo"
 	}
+	policyCfg := config.CurrentMCPToolPolicy()
+	if len(policyOverrides) > 0 {
+		policyCfg = policyOverrides[0]
+	}
 
 	m := mcp.NewServer(&mcp.Implementation{
 		Name:    "yururi-discord",
@@ -203,6 +212,7 @@ func New(bind string, defaultTimezone string, workspaceDir string, discord *disc
 		bind:            bind,
 		defaultTimezone: defaultTimezone,
 		workspaceDir:    filepath.Clean(workspaceDir),
+		toolPolicy:      newToolPolicy(policyCfg),
 		discord:         discord,
 		memory:          store,
 		mcpServer:       m,
@@ -333,6 +343,9 @@ func (s *Server) registerTools() {
 }
 
 func (s *Server) handleReadMessageHistory(ctx context.Context, _ *mcp.CallToolRequest, args ReadHistoryArgs) (*mcp.CallToolResult, ReadHistoryResult, error) {
+	if err := s.enforceToolPolicy("read_message_history"); err != nil {
+		return nil, ReadHistoryResult{}, err
+	}
 	messages, err := s.discord.ReadMessageHistory(ctx, args.ChannelID, args.BeforeMessageID, args.Limit)
 	if err != nil {
 		return nil, ReadHistoryResult{}, err
@@ -354,6 +367,9 @@ func (s *Server) handleReadMessageHistory(ctx context.Context, _ *mcp.CallToolRe
 }
 
 func (s *Server) handleSendMessage(ctx context.Context, _ *mcp.CallToolRequest, args SendMessageArgs) (*mcp.CallToolResult, MessageResult, error) {
+	if err := s.enforceToolPolicy("send_message"); err != nil {
+		return nil, MessageResult{}, err
+	}
 	id, err := s.discord.SendMessage(ctx, args.ChannelID, args.Content)
 	if err != nil {
 		return nil, MessageResult{}, err
@@ -362,6 +378,9 @@ func (s *Server) handleSendMessage(ctx context.Context, _ *mcp.CallToolRequest, 
 }
 
 func (s *Server) handleReplyMessage(ctx context.Context, _ *mcp.CallToolRequest, args ReplyMessageArgs) (*mcp.CallToolResult, MessageResult, error) {
+	if err := s.enforceToolPolicy("reply_message"); err != nil {
+		return nil, MessageResult{}, err
+	}
 	id, err := s.discord.ReplyMessage(ctx, args.ChannelID, args.ReplyToMessageID, args.Content)
 	if err != nil {
 		return nil, MessageResult{}, err
@@ -370,6 +389,9 @@ func (s *Server) handleReplyMessage(ctx context.Context, _ *mcp.CallToolRequest,
 }
 
 func (s *Server) handleAddReaction(ctx context.Context, _ *mcp.CallToolRequest, args AddReactionArgs) (*mcp.CallToolResult, SimpleOK, error) {
+	if err := s.enforceToolPolicy("add_reaction"); err != nil {
+		return nil, SimpleOK{}, err
+	}
 	if err := s.discord.AddReaction(ctx, args.ChannelID, args.MessageID, args.Emoji); err != nil {
 		return nil, SimpleOK{}, err
 	}
@@ -377,6 +399,9 @@ func (s *Server) handleAddReaction(ctx context.Context, _ *mcp.CallToolRequest, 
 }
 
 func (s *Server) handleStartTyping(ctx context.Context, _ *mcp.CallToolRequest, args StartTypingArgs) (*mcp.CallToolResult, SimpleOK, error) {
+	if err := s.enforceToolPolicy("start_typing"); err != nil {
+		return nil, SimpleOK{}, err
+	}
 	duration := 10 * time.Second
 	if args.DurationSec > 0 {
 		duration = time.Duration(args.DurationSec) * time.Second
@@ -386,6 +411,9 @@ func (s *Server) handleStartTyping(ctx context.Context, _ *mcp.CallToolRequest, 
 }
 
 func (s *Server) handleListChannels(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyArgs) (*mcp.CallToolResult, ListChannelsResult, error) {
+	if err := s.enforceToolPolicy("list_channels"); err != nil {
+		return nil, ListChannelsResult{}, err
+	}
 	channels, err := s.discord.ListChannels(ctx)
 	if err != nil {
 		return nil, ListChannelsResult{}, err
@@ -398,6 +426,9 @@ func (s *Server) handleListChannels(ctx context.Context, _ *mcp.CallToolRequest,
 }
 
 func (s *Server) handleGetUserDetail(ctx context.Context, _ *mcp.CallToolRequest, args UserDetailArgs) (*mcp.CallToolResult, UserDetailResult, error) {
+	if err := s.enforceToolPolicy("get_user_detail"); err != nil {
+		return nil, UserDetailResult{}, err
+	}
 	user, err := s.discord.GetUserDetail(ctx, args.ChannelID, args.UserID)
 	if err != nil {
 		return nil, UserDetailResult{}, err
@@ -411,6 +442,9 @@ func (s *Server) handleGetUserDetail(ctx context.Context, _ *mcp.CallToolRequest
 }
 
 func (s *Server) handleGetCurrentTime(_ context.Context, _ *mcp.CallToolRequest, args CurrentTimeArgs) (*mcp.CallToolResult, CurrentTimeResult, error) {
+	if err := s.enforceToolPolicy("get_current_time"); err != nil {
+		return nil, CurrentTimeResult{}, err
+	}
 	tz := strings.TrimSpace(args.Timezone)
 	if tz == "" {
 		tz = s.defaultTimezone
@@ -428,6 +462,9 @@ func (s *Server) handleGetCurrentTime(_ context.Context, _ *mcp.CallToolRequest,
 }
 
 func (s *Server) handleMemoryUpsertUserNote(ctx context.Context, _ *mcp.CallToolRequest, args MemoryUpsertUserNoteArgs) (*mcp.CallToolResult, MemoryPathResult, error) {
+	if err := s.enforceToolPolicy("memory_upsert_user_note"); err != nil {
+		return nil, MemoryPathResult{}, err
+	}
 	path, err := s.memory.UpsertUserNote(ctx, memory.UserNoteInput{
 		UserID: args.UserID,
 		Note:   args.Note,
@@ -440,6 +477,9 @@ func (s *Server) handleMemoryUpsertUserNote(ctx context.Context, _ *mcp.CallTool
 }
 
 func (s *Server) handleMemoryUpsertChannelIntent(ctx context.Context, _ *mcp.CallToolRequest, args MemoryUpsertChannelIntentArgs) (*mcp.CallToolResult, MemoryPathResult, error) {
+	if err := s.enforceToolPolicy("memory_upsert_channel_intent"); err != nil {
+		return nil, MemoryPathResult{}, err
+	}
 	path, err := s.memory.UpsertChannelIntent(ctx, memory.ChannelIntentInput{
 		ChannelID: args.ChannelID,
 		Intent:    args.Intent,
@@ -452,6 +492,9 @@ func (s *Server) handleMemoryUpsertChannelIntent(ctx context.Context, _ *mcp.Cal
 }
 
 func (s *Server) handleMemoryUpsertTask(ctx context.Context, _ *mcp.CallToolRequest, args MemoryUpsertTaskArgs) (*mcp.CallToolResult, MemoryTaskResult, error) {
+	if err := s.enforceToolPolicy("memory_upsert_task"); err != nil {
+		return nil, MemoryTaskResult{}, err
+	}
 	var next time.Time
 	if raw := strings.TrimSpace(args.NextRunAt); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)
@@ -480,6 +523,9 @@ func (s *Server) handleMemoryUpsertTask(ctx context.Context, _ *mcp.CallToolRequ
 }
 
 func (s *Server) handleMemoryQuery(ctx context.Context, _ *mcp.CallToolRequest, args MemoryQueryArgs) (*mcp.CallToolResult, MemoryQueryResult, error) {
+	if err := s.enforceToolPolicy("memory_query"); err != nil {
+		return nil, MemoryQueryResult{}, err
+	}
 	results, err := s.memory.Query(ctx, memory.QueryInput{Keyword: args.Keyword, Limit: args.Limit})
 	if err != nil {
 		return nil, MemoryQueryResult{}, err
@@ -492,6 +538,9 @@ func (s *Server) handleMemoryQuery(ctx context.Context, _ *mcp.CallToolRequest, 
 }
 
 func (s *Server) handleReadWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
+	if err := s.enforceToolPolicy("read_workspace_doc"); err != nil {
+		return nil, WorkspaceDocResult{}, err
+	}
 	path, err := s.workspaceDocPath(args.Name)
 	if err != nil {
 		return nil, WorkspaceDocResult{}, err
@@ -508,6 +557,9 @@ func (s *Server) handleReadWorkspaceDoc(_ context.Context, _ *mcp.CallToolReques
 }
 
 func (s *Server) handleAppendWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocWriteArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
+	if err := s.enforceToolPolicy("append_workspace_doc"); err != nil {
+		return nil, WorkspaceDocResult{}, err
+	}
 	path, err := s.workspaceDocPath(args.Name)
 	if err != nil {
 		return nil, WorkspaceDocResult{}, err
@@ -541,6 +593,9 @@ func (s *Server) handleAppendWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequ
 }
 
 func (s *Server) handleReplaceWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocWriteArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
+	if err := s.enforceToolPolicy("replace_workspace_doc"); err != nil {
+		return nil, WorkspaceDocResult{}, err
+	}
 	path, err := s.workspaceDocPath(args.Name)
 	if err != nil {
 		return nil, WorkspaceDocResult{}, err
@@ -568,4 +623,95 @@ func (s *Server) workspaceDocPath(name string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported workspace doc: %s", name)
 	}
+}
+
+func (s *Server) enforceToolPolicy(toolName string) error {
+	allowed, reason := s.toolPolicy.evaluate(toolName)
+	if allowed {
+		return nil
+	}
+	log.Printf("mcp tool denied: tool=%s reason=%q", toolName, reason)
+	return fmt.Errorf("%w: tool=%s reason=%s", ErrToolDenied, toolName, reason)
+}
+
+type toolPolicy struct {
+	allowPatterns []string
+	denyPatterns  []string
+}
+
+func newToolPolicy(cfg config.MCPToolPolicyConfig) toolPolicy {
+	return toolPolicy{
+		allowPatterns: normalizeToolPatterns(cfg.AllowPatterns),
+		denyPatterns:  normalizeToolPatterns(cfg.DenyPatterns),
+	}
+}
+
+func (p toolPolicy) evaluate(toolName string) (bool, string) {
+	name := strings.ToLower(strings.TrimSpace(toolName))
+	if name == "" {
+		return false, "tool name is empty"
+	}
+	for _, pattern := range p.denyPatterns {
+		if matchToolPattern(pattern, name) {
+			return false, fmt.Sprintf("matched deny pattern %q", pattern)
+		}
+	}
+	if len(p.allowPatterns) == 0 {
+		return true, "allowed by default"
+	}
+	for _, pattern := range p.allowPatterns {
+		if matchToolPattern(pattern, name) {
+			return true, fmt.Sprintf("matched allow pattern %q", pattern)
+		}
+	}
+	return false, "not matched by allow patterns"
+}
+
+func normalizeToolPatterns(patterns []string) []string {
+	out := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		trimmed := strings.ToLower(strings.TrimSpace(pattern))
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func matchToolPattern(pattern string, value string) bool {
+	p := strings.ToLower(strings.TrimSpace(pattern))
+	v := strings.ToLower(strings.TrimSpace(value))
+	if p == "" {
+		return false
+	}
+
+	patternIndex := 0
+	valueIndex := 0
+	starPatternIndex := -1
+	starValueIndex := 0
+
+	for valueIndex < len(v) {
+		if patternIndex < len(p) && p[patternIndex] == '*' {
+			starPatternIndex = patternIndex
+			starValueIndex = valueIndex
+			patternIndex++
+			continue
+		}
+		if patternIndex < len(p) && p[patternIndex] == v[valueIndex] {
+			patternIndex++
+			valueIndex++
+			continue
+		}
+		if starPatternIndex == -1 {
+			return false
+		}
+		patternIndex = starPatternIndex + 1
+		starValueIndex++
+		valueIndex = starValueIndex
+	}
+	for patternIndex < len(p) && p[patternIndex] == '*' {
+		patternIndex++
+	}
+	return patternIndex == len(p)
 }

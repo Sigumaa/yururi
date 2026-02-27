@@ -2,10 +2,12 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/sigumaa/yururi/internal/config"
 	"github.com/sigumaa/yururi/internal/discordx"
 	"github.com/sigumaa/yururi/internal/memory"
 )
@@ -19,7 +21,7 @@ func TestServerURL(t *testing.T) {
 	}
 	workspaceDir := t.TempDir()
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, store)
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, store, config.MCPToolPolicyConfig{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -37,7 +39,7 @@ func TestHandleGetCurrentTime(t *testing.T) {
 	}
 	workspaceDir := t.TempDir()
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, store)
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, store, config.MCPToolPolicyConfig{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -71,7 +73,7 @@ func TestWorkspaceDocReadWrite(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, store)
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, store, config.MCPToolPolicyConfig{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -89,5 +91,81 @@ func TestWorkspaceDocReadWrite(t *testing.T) {
 	}
 	if !strings.Contains(got.Content, "user prefers concise answers") {
 		t.Fatalf("workspace doc content missing appended text: %q", got.Content)
+	}
+}
+
+func TestToolPolicyEvaluateDenyPrecedence(t *testing.T) {
+	t.Parallel()
+
+	policy := newToolPolicy(config.MCPToolPolicyConfig{
+		AllowPatterns: []string{"memory_*"},
+		DenyPatterns:  []string{"memory_upsert_*"},
+	})
+
+	allowed, reason := policy.evaluate("memory_upsert_task")
+	if allowed {
+		t.Fatal("policy.evaluate(memory_upsert_task) = allowed, want denied")
+	}
+	if !strings.Contains(reason, `matched deny pattern "memory_upsert_*"`) {
+		t.Fatalf("deny reason = %q", reason)
+	}
+
+	allowed, reason = policy.evaluate("memory_query")
+	if !allowed {
+		t.Fatalf("policy.evaluate(memory_query) denied, reason=%q", reason)
+	}
+}
+
+func TestToolPolicyEvaluateWildcardCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	policy := newToolPolicy(config.MCPToolPolicyConfig{
+		AllowPatterns: []string{"READ_*", "GET_CURRENT_*"},
+	})
+
+	allowed, reason := policy.evaluate("read_workspace_doc")
+	if !allowed {
+		t.Fatalf("policy.evaluate(read_workspace_doc) denied, reason=%q", reason)
+	}
+
+	allowed, reason = policy.evaluate("Get_Current_Time")
+	if !allowed {
+		t.Fatalf("policy.evaluate(Get_Current_Time) denied, reason=%q", reason)
+	}
+
+	allowed, reason = policy.evaluate("memory_query")
+	if allowed {
+		t.Fatalf("policy.evaluate(memory_query) = allowed, want denied")
+	}
+	if reason != "not matched by allow patterns" {
+		t.Fatalf("policy.evaluate(memory_query) reason = %q", reason)
+	}
+}
+
+func TestHandleGetCurrentTimeDeniedByPolicy(t *testing.T) {
+	t.Parallel()
+
+	store, err := memory.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	workspaceDir := t.TempDir()
+
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, store, config.MCPToolPolicyConfig{
+		DenyPatterns: []string{"get_current_*"},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	if _, _, err := srv.handleGetCurrentTime(context.Background(), nil, CurrentTimeArgs{}); err == nil {
+		t.Fatal("handleGetCurrentTime() error = nil, want deny error")
+	} else {
+		if !errors.Is(err, ErrToolDenied) {
+			t.Fatalf("handleGetCurrentTime() error = %v, want ErrToolDenied", err)
+		}
+		if !strings.Contains(err.Error(), "tool=get_current_time") {
+			t.Fatalf("handleGetCurrentTime() error missing tool name: %v", err)
+		}
 	}
 }
