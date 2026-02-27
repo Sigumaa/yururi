@@ -51,6 +51,7 @@ func main() {
 		log.Fatalf("create mcp server: %v", err)
 	}
 	aiClient := codex.NewClient(cfg.Codex, cfg.MCP.URL)
+	defer aiClient.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

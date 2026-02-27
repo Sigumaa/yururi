@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/sigumaa/yururi/internal/config"
@@ -29,6 +30,17 @@ type Client struct {
 	workspaceDir    string
 	homeDir         string
 	mcpURL          string
+
+	mu      sync.Mutex
+	session *appServerSession
+}
+
+type appServerSession struct {
+	cmd           *exec.Cmd
+	stdin         io.WriteCloser
+	enc           *json.Encoder
+	dec           *json.Decoder
+	nextRequestID int
 }
 
 type TurnInput struct {
@@ -81,7 +93,36 @@ func NewClient(cfg config.CodexConfig, mcpURL string) *Client {
 }
 
 func (c *Client) RunTurn(ctx context.Context, input TurnInput) (TurnResult, error) {
-	cmd := exec.CommandContext(ctx, c.command, c.args...)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := c.ensureSessionLocked(); err != nil {
+			return TurnResult{}, err
+		}
+		result, err := c.runTurnLocked(ctx, input)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		c.stopSessionLocked()
+	}
+	return TurnResult{}, lastErr
+}
+
+func (c *Client) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stopSessionLocked()
+}
+
+func (c *Client) ensureSessionLocked() error {
+	if c.session != nil {
+		return nil
+	}
+
+	cmd := exec.Command(c.command, c.args...)
 	if c.workspaceDir != "" {
 		cmd.Dir = c.workspaceDir
 	}
@@ -89,58 +130,71 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (TurnResult, erro
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return TurnResult{}, fmt.Errorf("codex stdin pipe: %w", err)
+		return fmt.Errorf("codex stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return TurnResult{}, fmt.Errorf("codex stdout pipe: %w", err)
+		return fmt.Errorf("codex stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return TurnResult{}, fmt.Errorf("codex stderr pipe: %w", err)
+		return fmt.Errorf("codex stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		return TurnResult{}, fmt.Errorf("start codex: %w", err)
+		return fmt.Errorf("start codex: %w", err)
 	}
-	defer func() {
-		_ = stdin.Close()
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		_ = cmd.Wait()
-	}()
 	go io.Copy(io.Discard, stderr)
 
-	enc := json.NewEncoder(stdin)
 	dec := json.NewDecoder(stdout)
 	dec.UseNumber()
+	c.session = &appServerSession{
+		cmd:           cmd,
+		stdin:         stdin,
+		enc:           json.NewEncoder(stdin),
+		dec:           dec,
+		nextRequestID: initRequestID,
+	}
 
-	if err := sendRequest(enc, initRequestID, "initialize", map[string]any{
+	initID := c.nextRequestIDLocked()
+	if err := sendRequest(c.session.enc, initID, "initialize", map[string]any{
 		"capabilities": nil,
 		"clientInfo": map[string]any{
 			"name":    "yururi",
 			"version": "phase-full",
 		},
 	}); err != nil {
-		return TurnResult{}, err
+		c.stopSessionLocked()
+		return err
 	}
-	initResp, err := readUntilResponse(dec, enc, initRequestID, nil)
+	initResp, err := readUntilResponse(c.session.dec, c.session.enc, initID, nil)
 	if err != nil {
-		return TurnResult{}, fmt.Errorf("read initialize response: %w", err)
+		c.stopSessionLocked()
+		return fmt.Errorf("read initialize response: %w", err)
 	}
 	if initResp.Error != nil {
-		return TurnResult{}, rpcCallError("initialize", initResp.Error)
+		c.stopSessionLocked()
+		return rpcCallError("initialize", initResp.Error)
 	}
 
-	if err := sendNotification(enc, "initialized", map[string]any{}); err != nil {
-		return TurnResult{}, err
+	if err := sendNotification(c.session.enc, "initialized", map[string]any{}); err != nil {
+		c.stopSessionLocked()
+		return err
 	}
 
-	if err := sendRequest(enc, threadRequestID, "thread/start", threadStartParams(input, c.model, c.workspaceDir, c.reasoningEffort, c.mcpURL)); err != nil {
+	return nil
+}
+
+func (c *Client) runTurnLocked(_ context.Context, input TurnInput) (TurnResult, error) {
+	if c.session == nil {
+		return TurnResult{}, errors.New("codex session is not initialized")
+	}
+
+	threadReqID := c.nextRequestIDLocked()
+	if err := sendRequest(c.session.enc, threadReqID, "thread/start", threadStartParams(input, c.model, c.workspaceDir, c.reasoningEffort, c.mcpURL)); err != nil {
 		return TurnResult{}, err
 	}
-	threadResp, err := readUntilResponse(dec, enc, threadRequestID, nil)
+	threadResp, err := readUntilResponse(c.session.dec, c.session.enc, threadReqID, nil)
 	if err != nil {
 		return TurnResult{}, fmt.Errorf("read thread/start response: %w", err)
 	}
@@ -152,7 +206,8 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (TurnResult, erro
 		return TurnResult{}, fmt.Errorf("extract thread id: %w", err)
 	}
 
-	if err := sendRequest(enc, turnRequestID, "turn/start", turnStartParams(threadID, input.UserPrompt)); err != nil {
+	turnReqID := c.nextRequestIDLocked()
+	if err := sendRequest(c.session.enc, turnReqID, "turn/start", turnStartParams(threadID, input.UserPrompt)); err != nil {
 		return TurnResult{}, err
 	}
 
@@ -163,7 +218,7 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (TurnResult, erro
 		aggregator.consume(method, params)
 	}
 
-	turnResp, err := readUntilResponse(dec, enc, turnRequestID, onNotification)
+	turnResp, err := readUntilResponse(c.session.dec, c.session.enc, turnReqID, onNotification)
 	if err != nil {
 		return TurnResult{}, fmt.Errorf("read turn/start response: %w", err)
 	}
@@ -174,12 +229,12 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (TurnResult, erro
 	aggregator.turnID = turnID
 
 	for !aggregator.Completed() {
-		msg, err := readOneMessage(dec)
+		msg, err := readOneMessage(c.session.dec)
 		if err != nil {
 			return TurnResult{}, fmt.Errorf("wait turn/completed: %w", err)
 		}
 		if msg.Method != "" && len(msg.ID) > 0 {
-			if err := handleServerRequest(enc, msg); err != nil {
+			if err := handleServerRequest(c.session.enc, msg); err != nil {
 				return TurnResult{}, fmt.Errorf("handle server request: %w", err)
 			}
 			continue
@@ -197,6 +252,26 @@ func (c *Client) RunTurn(ctx context.Context, input TurnInput) (TurnResult, erro
 		ErrorMessage:  aggregator.errorMessage,
 		ToolCalls:     aggregator.toolCalls,
 	}, nil
+}
+
+func (c *Client) nextRequestIDLocked() int {
+	id := c.session.nextRequestID
+	c.session.nextRequestID++
+	return id
+}
+
+func (c *Client) stopSessionLocked() {
+	if c.session == nil {
+		return
+	}
+	_ = c.session.stdin.Close()
+	if c.session.cmd != nil && c.session.cmd.Process != nil {
+		_ = c.session.cmd.Process.Kill()
+	}
+	if c.session.cmd != nil {
+		_ = c.session.cmd.Wait()
+	}
+	c.session = nil
 }
 
 func sendRequest(enc *json.Encoder, id int, method string, params any) error {
