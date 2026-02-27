@@ -14,7 +14,13 @@ const (
 	defaultCoalesceWindow = 1200 * time.Millisecond
 )
 
-type Handler func(msg *discordgo.MessageCreate, mergedCount int)
+type Handler func(msg *discordgo.MessageCreate, meta CallbackMetadata)
+
+type CallbackMetadata struct {
+	MergedCount int           `json:"merged_count"`
+	QueueWait   time.Duration `json:"queue_wait_ms"`
+	EnqueuedAt  time.Time     `json:"enqueued_at"`
+}
 
 type Dispatcher struct {
 	ctx            context.Context
@@ -27,7 +33,12 @@ type Dispatcher struct {
 }
 
 type worker struct {
-	queue chan *discordgo.MessageCreate
+	queue chan queuedMessage
+}
+
+type queuedMessage struct {
+	msg        *discordgo.MessageCreate
+	enqueuedAt time.Time
 }
 
 func New(ctx context.Context, queueSize int, coalesceWindow time.Duration, handler Handler) *Dispatcher {
@@ -38,7 +49,7 @@ func New(ctx context.Context, queueSize int, coalesceWindow time.Duration, handl
 		coalesceWindow = defaultCoalesceWindow
 	}
 	if handler == nil {
-		handler = func(*discordgo.MessageCreate, int) {}
+		handler = func(*discordgo.MessageCreate, CallbackMetadata) {}
 	}
 	return &Dispatcher{
 		ctx:            ctx,
@@ -62,7 +73,7 @@ func (d *Dispatcher) Enqueue(msg *discordgo.MessageCreate) (dropped bool) {
 	}
 
 	select {
-	case w.queue <- msg:
+	case w.queue <- queuedMessage{msg: msg, enqueuedAt: time.Now()}:
 		return false
 	default:
 	}
@@ -74,7 +85,7 @@ func (d *Dispatcher) Enqueue(msg *discordgo.MessageCreate) (dropped bool) {
 	default:
 	}
 	select {
-	case w.queue <- msg:
+	case w.queue <- queuedMessage{msg: msg, enqueuedAt: time.Now()}:
 		return dropped
 	default:
 		return true
@@ -91,7 +102,7 @@ func (d *Dispatcher) getOrCreateWorker(msg *discordgo.MessageCreate) *worker {
 		return w
 	}
 
-	w := &worker{queue: make(chan *discordgo.MessageCreate, d.queueSize)}
+	w := &worker{queue: make(chan queuedMessage, d.queueSize)}
 	d.workers[key] = w
 	go d.runWorker(w)
 	return w
@@ -103,12 +114,13 @@ func (d *Dispatcher) runWorker(w *worker) {
 		case <-d.ctx.Done():
 			return
 		case first := <-w.queue:
-			if first == nil {
+			if first.msg == nil {
 				continue
 			}
 
-			latest := first
+			latest := first.msg
 			mergedCount := 1
+			enqueuedAt := first.enqueuedAt
 			timer := time.NewTimer(d.coalesceWindow)
 		collect:
 			for {
@@ -119,8 +131,8 @@ func (d *Dispatcher) runWorker(w *worker) {
 					}
 					return
 				case next := <-w.queue:
-					if next != nil {
-						latest = next
+					if next.msg != nil {
+						latest = next.msg
 						mergedCount++
 					}
 				case <-timer.C:
@@ -128,7 +140,15 @@ func (d *Dispatcher) runWorker(w *worker) {
 				}
 			}
 
-			d.handler(latest, mergedCount)
+			queueWait := time.Since(enqueuedAt)
+			if queueWait < 0 {
+				queueWait = 0
+			}
+			d.handler(latest, CallbackMetadata{
+				MergedCount: mergedCount,
+				QueueWait:   queueWait,
+				EnqueuedAt:  enqueuedAt,
+			})
 		}
 	}
 }
