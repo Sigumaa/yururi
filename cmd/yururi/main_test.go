@@ -192,6 +192,18 @@ func TestBuildMessageWhisperMessage(t *testing.T) {
 			wantHas: "所感=",
 		},
 		{
+			name: "prefer tool summary when tools exist",
+			result: codex.TurnResult{
+				AssistantText: "👀でリアクションしておいたよ。\nあわせて運用メモを更新した。",
+				ToolCalls: []codex.MCPToolCall{
+					{Tool: "add_reaction", Status: "completed"},
+					{Tool: "append_workspace_doc", Status: "completed"},
+				},
+			},
+			wantOK:  true,
+			wantHas: "対応=add_reaction(completed), append_workspace_doc(completed)",
+		},
+		{
 			name: "skip noop decision",
 			result: codex.TurnResult{
 				AssistantText: `{"action":"noop"}`,
@@ -237,6 +249,7 @@ func TestTrimLogString(t *testing.T) {
 		{name: "over limit", text: "abcdef", maxLen: 5, want: "ab..."},
 		{name: "tiny max", text: "abcdef", maxLen: 2, want: "ab"},
 		{name: "non positive max", text: "abcdef", maxLen: 0, want: "abcdef"},
+		{name: "multibyte safe trim", text: "これは長いテキストです", maxLen: 8, want: "これは長い..."},
 	}
 
 	for _, tc := range tests {

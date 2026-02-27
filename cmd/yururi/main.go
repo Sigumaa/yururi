@@ -461,13 +461,14 @@ func trimLogAny(value any, maxLen int) string {
 
 func trimLogString(text string, maxLen int) string {
 	trimmed := strings.TrimSpace(text)
-	if maxLen <= 0 || len(trimmed) <= maxLen {
+	runes := []rune(trimmed)
+	if maxLen <= 0 || len(runes) <= maxLen {
 		return trimmed
 	}
 	if maxLen <= 3 {
-		return trimmed[:maxLen]
+		return string(runes[:maxLen])
 	}
-	return trimmed[:maxLen-3] + "..."
+	return string(runes[:maxLen-3]) + "..."
 }
 
 func maybeDecisionOutput(text string) bool {
@@ -656,9 +657,12 @@ func buildMessageWhisperMessage(runID string, channelName string, result codex.T
 
 	text := ""
 	if hasDecision {
-		text = strings.TrimSpace(summary)
+		text = sanitizeWhisperText(summary)
+	} else if len(result.ToolCalls) > 0 {
+		// Prefer objective action summary when tool calls exist.
+		text = "対応=" + summarizeToolCalls(result.ToolCalls, 3)
 	} else {
-		text = strings.TrimSpace(result.AssistantText)
+		text = sanitizeWhisperText(result.AssistantText)
 	}
 	text = trimLogString(text, 140)
 	if text == "" && errMsg == "" {
@@ -676,6 +680,18 @@ func buildMessageWhisperMessage(runID string, channelName string, result codex.T
 		lines = append(lines, "エラー="+trimLogString(errMsg, 140))
 	}
 	return strings.Join(lines, "\n"), true
+}
+
+func sanitizeWhisperText(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	line := strings.Split(trimmed, "\n")[0]
+	line = strings.TrimSpace(line)
+	line = strings.TrimPrefix(line, "- ")
+	line = strings.TrimPrefix(line, "* ")
+	return strings.TrimSpace(line)
 }
 
 func summarizeToolCalls(toolCalls []codex.MCPToolCall, limit int) string {
