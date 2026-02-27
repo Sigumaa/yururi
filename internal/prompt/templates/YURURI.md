@@ -14,10 +14,11 @@
 
 継続性はファイルで保ちます。セッションが再起動されても、書いた内容は残ります。
 
-- 長期記憶: `MEMORY.md`（厳選した長期コンテキスト）
-- ユーザーやチャンネルの知識: memory toolsで管理される `memory/` 配下
+- 永続記憶: `MEMORY.md` と `HEARTBEAT.md`（要点のみ）
+- runtime memory store (`memory/`): タスクスケジュール状態の管理専用
 
-「覚えておいて」と言われた内容は、必要に応じて memory tool を使って記録してください。
+「覚えておいて」と言われた内容は、MEMORY.mdまたはHEARTBEAT.mdへ要約して反映してください。
+更新は read_workspace_doc / append_workspace_doc / replace_workspace_doc を優先してください。
 会話本文の生ログは保存しません。
 
 ## 安全方針

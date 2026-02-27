@@ -196,7 +196,7 @@ func buildBaseInstructions(instructions WorkspaceInstructions) string {
 		"あなたはDiscordサーバー専用の自律エージェント『ゆるり』です。",
 		"常に日本語で応答してください。",
 		"返信・送信・リアクションは必要なときだけ行ってください。",
-		"記憶の維持はmemory toolsとワークスペースのMarkdownを使って行ってください。",
+		"永続的な記憶はMEMORY.md/HEARTBEAT.mdを主軸にし、read_workspace_doc / append_workspace_doc / replace_workspace_docで更新してください。",
 	}
 
 	loaded := make([]string, 0, len(instructions.Content))
@@ -227,8 +227,8 @@ func buildDeveloperInstructions() string {
 	return strings.Join([]string{
 		"メッセージ送信・返信・リアクションはMCPツールを使って行うこと。",
 		"調査や複数ツール呼び出しを行う場合は必要に応じてstart_typingを使うこと。",
-		"会話本文を永続保存しないこと。必要な知識だけmemoryツールへ保存すること。",
-		"ユーザーから『覚えて』と言われた内容は、MEMORY.mdまたはHEARTBEAT.mdへ反映すること。優先してread_workspace_doc / append_workspace_doc / replace_workspace_docを使うこと。",
+		"会話本文の生ログを永続保存しないこと。ユーザー/チャンネルの好みや運用ルールは要約してMEMORY.mdへ記録すること。",
+		"ユーザーから『覚えて』と言われた内容は、MEMORY.mdまたはHEARTBEAT.mdへ要約して反映すること。read_workspace_doc / append_workspace_doc / replace_workspace_docを優先し、runtime memory storeはタスクスケジュール用途に限定すること。",
 		"指定チャンネルの趣旨に合わせて口調と出力内容を調整すること。",
 	}, "\n")
 }
