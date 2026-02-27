@@ -172,6 +172,9 @@ func TestBuildAutonomyPromptDoesNotIncludeHeartbeatPrompt(t *testing.T) {
 	if !strings.Contains(got, prompt.AutonomySystemPrompt) {
 		t.Fatalf("autonomy prompt missing autonomy system prompt: %q", got)
 	}
+	if !strings.Contains(got, "独り言") {
+		t.Fatalf("autonomy prompt should mention monologue style for times: %q", got)
+	}
 	if strings.Contains(got, prompt.HeartbeatSystemPrompt) {
 		t.Fatalf("autonomy prompt should not include heartbeat prompt: %q", got)
 	}

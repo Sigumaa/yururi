@@ -550,7 +550,8 @@ func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string)
 		prompt.AutonomySystemPrompt,
 		"指定チャンネルを観察し、返信するほどではないが共有価値のある内容は times チャンネルへ send_message で共有してよいです。",
 		"返信・times投稿を含むすべての出力で SOUL.md のキャラクター・語り口を維持してください。",
-		"times投稿は形式を固定しません。何を言うかは SOUL.md のペルソナに沿って自由に決めてください。",
+		"times投稿は形式を固定しません。独り言として、思ったことを SOUL.md のペルソナでそのままつぶやいてください。",
+		"times投稿では人に説明する口調や、誰かに話しかける口調は避けてください。",
 		"ownerの最近のX投稿確認には twilog-mcp が利用可能なら優先してください。",
 	}
 	if strings.TrimSpace(timesChannelID) != "" {
