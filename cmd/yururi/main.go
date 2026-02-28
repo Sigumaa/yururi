@@ -270,9 +270,7 @@ func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orch
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=codex_turn_error_detail run_id=%s message=%s err=%s", runID, m.ID, result.ErrorMessage)
 	}
-	if err := postMessageWhisper(ctx, cfg, gateway, whisperState, runID, m, result); err != nil {
-		log.Printf("event=message_times_post_failed run_id=%s message=%s err=%v", runID, m.ID, err)
-	}
+	log.Printf("event=message_times_skipped run_id=%s message=%s reason=disabled_auto_whisper", runID, m.ID)
 }
 
 func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatRuntime, sender heartbeatWhisperSender, whisperState *timesWhisperState, runID string) error {
