@@ -68,7 +68,7 @@ func TestRunHeartbeatTurnCallsRuntime(t *testing.T) {
 	}
 }
 
-func TestRunHeartbeatTurnPostsTimesWhisperWhenWorkExists(t *testing.T) {
+func TestRunHeartbeatTurnDoesNotAutoPostTimesWhisper(t *testing.T) {
 	t.Parallel()
 
 	workspaceDir := t.TempDir()
@@ -92,14 +92,8 @@ func TestRunHeartbeatTurnPostsTimesWhisperWhenWorkExists(t *testing.T) {
 	if err := runHeartbeatTurn(context.Background(), cfg, runtime, sender, &timesWhisperState{}, "hb-whisper"); err != nil {
 		t.Fatalf("runHeartbeatTurn() error = %v", err)
 	}
-	if len(sender.messages) != 1 {
-		t.Fatalf("times whisper count = %d, want 1", len(sender.messages))
-	}
-	if sender.messages[0].channelID != "times" {
-		t.Fatalf("times whisper channel = %q, want times", sender.messages[0].channelID)
-	}
-	if !strings.Contains(sender.messages[0].content, "THOUGHT_NOTE_123") {
-		t.Fatalf("times whisper content missing summary: %q", sender.messages[0].content)
+	if len(sender.messages) != 0 {
+		t.Fatalf("times whisper count = %d, want 0", len(sender.messages))
 	}
 }
 
@@ -132,7 +126,7 @@ func TestRunHeartbeatTurnSuppressesTimesWhisperForNoop(t *testing.T) {
 	}
 }
 
-func TestRunHeartbeatTurnTimesWhisperRespectsMinInterval(t *testing.T) {
+func TestRunHeartbeatTurnIgnoresTimesMinIntervalBecauseAutoWhisperDisabled(t *testing.T) {
 	t.Parallel()
 
 	workspaceDir := t.TempDir()
@@ -161,8 +155,8 @@ func TestRunHeartbeatTurnTimesWhisperRespectsMinInterval(t *testing.T) {
 	if err := runHeartbeatTurn(context.Background(), cfg, runtime, sender, state, "hb-2"); err != nil {
 		t.Fatalf("runHeartbeatTurn() second error = %v", err)
 	}
-	if len(sender.messages) != 1 {
-		t.Fatalf("times whisper count = %d, want 1", len(sender.messages))
+	if len(sender.messages) != 0 {
+		t.Fatalf("times whisper count = %d, want 0", len(sender.messages))
 	}
 }
 

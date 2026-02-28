@@ -276,6 +276,8 @@ func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orch
 }
 
 func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatRuntime, sender heartbeatWhisperSender, whisperState *timesWhisperState, runID string) error {
+	_ = sender
+	_ = whisperState
 	started := time.Now()
 	log.Printf("event=heartbeat_tick run_id=%s", runID)
 
@@ -304,9 +306,7 @@ func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatR
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=heartbeat_turn_error_detail run_id=%s err=%s", runID, result.ErrorMessage)
 	}
-	if err := postHeartbeatWhisper(ctx, cfg, sender, whisperState, runID, result); err != nil {
-		log.Printf("event=heartbeat_times_post_failed run_id=%s err=%v", runID, err)
-	}
+	log.Printf("event=heartbeat_times_skipped run_id=%s reason=disabled_auto_whisper", runID)
 	return nil
 }
 
