@@ -536,12 +536,12 @@ func TestShouldResetSessionAfterMemoryUpdate(t *testing.T) {
 		want      bool
 	}{
 		{
-			name: "append memory doc",
+			name: "append memory doc does not reset",
 			toolCalls: []codex.MCPToolCall{{
 				Tool:      "append_workspace_doc",
 				Arguments: map[string]any{"name": "  MEMORY.md  "},
 			}},
-			want: true,
+			want: false,
 		},
 		{
 			name: "replace memory doc with case difference",
@@ -568,9 +568,17 @@ func TestShouldResetSessionAfterMemoryUpdate(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "json string arguments",
+			name: "json string arguments append does not reset",
 			toolCalls: []codex.MCPToolCall{{
 				Tool:      "append_workspace_doc",
+				Arguments: `{"name":"memory.md"}`,
+			}},
+			want: false,
+		},
+		{
+			name: "json string arguments replace resets",
+			toolCalls: []codex.MCPToolCall{{
+				Tool:      "replace_workspace_doc",
 				Arguments: `{"name":"memory.md"}`,
 			}},
 			want: true,

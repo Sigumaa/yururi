@@ -504,16 +504,16 @@ func maybeDecisionOutput(text string) bool {
 
 func shouldResetSessionAfterMemoryUpdate(toolCalls []codex.MCPToolCall) bool {
 	for _, toolCall := range toolCalls {
-		if isMemoryUpdateToolCall(toolCall) {
+		if isMemoryReplaceToolCall(toolCall) {
 			return true
 		}
 	}
 	return false
 }
 
-func isMemoryUpdateToolCall(toolCall codex.MCPToolCall) bool {
+func isMemoryReplaceToolCall(toolCall codex.MCPToolCall) bool {
 	tool := strings.ToLower(strings.TrimSpace(toolCall.Tool))
-	if tool != "append_workspace_doc" && tool != "replace_workspace_doc" {
+	if tool != "replace_workspace_doc" {
 		return false
 	}
 

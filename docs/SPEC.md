@@ -99,7 +99,7 @@
 4. Codex turn開始。
 5. 必要に応じてMCP tool呼び出し。
 6. 最終`DecisionResult`反映。
-7. `append_workspace_doc`/`replace_workspace_doc`で`MEMORY.md`更新を検知した場合、当該チャンネルのセッションをリセットし次回投稿は新規`thread/start`で開始する。
+7. `replace_workspace_doc`で`MEMORY.md`更新を検知した場合のみ、当該チャンネルのセッションをリセットし次回投稿は新規`thread/start`で開始する。`append_workspace_doc`ではセッションを維持する。
 8. typing停止・メタログ出力。
 9. heartbeat時は`HEARTBEAT.md`の指示に従って必要時のみ行動する。
 10. heartbeat・通常メッセージ・autonomy実行ログには`assistant_text`、decision要約（parse可否含む）、tool call詳細（server/tool/status/arguments/result）を出力する。
@@ -112,6 +112,7 @@
 17. autonomy実行のプロンプトにはheartbeat専用の定期作業指示を含めない。
 18. autonomy実行時は `persona.times_channel_id` が設定されていれば、times直近履歴（最大200件）を重複回避用の参照としてプロンプトへ渡す。履歴は参照専用で、文体や内容へ過度に引っ張られないよう明示する。
 19. autonomyにおけるX/twilog参照は必須ではなく、必要なときだけ実施する。times投稿で毎回Xの参照・引用を行う必要はない。
+20. MEMORY.md は user_id 単位の要約を優先し、時刻・日付などのタイムスタンプ情報は原則記録しない。更新は毎ターン行わず、長期再利用価値がある新事実がある場合のみ実施する。
 
 ## 制約と運用ルール
 1. 指定チャンネル外では動作しない。

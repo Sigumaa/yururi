@@ -122,6 +122,7 @@ func BuildMessageBundle(instructions WorkspaceInstructions, input MessageInput) 
 	if len(recent) > 0 {
 		recentSection = strings.Join(recent, "\n\n")
 	}
+	memoryFocus := buildMemoryFocusSection(instructions, input)
 
 	ownerText := "false"
 	if input.IsOwner {
@@ -142,6 +143,7 @@ func BuildMessageBundle(instructions WorkspaceInstructions, input MessageInput) 
 		"## 今回のメッセージ",
 		"",
 		formatRuntimeMessage(input.Current),
+		memoryFocus,
 	}, "\n")
 
 	return Bundle{
@@ -203,22 +205,115 @@ func buildDeveloperInstructions() string {
 		"timesへの投稿は形式を固定しない。独り言として、SOUL.mdのペルソナに沿って思ったことをそのまま書くこと。",
 		"times投稿では相手に説明する文体や、誰かへ話しかける文体を避けること。",
 		"会話本文の生ログを永続保存しないこと。ユーザー/チャンネルの好みや運用ルールは要約してMEMORY.mdへ記録すること。",
-		"ユーザーから『覚えて』と言われた内容は、MEMORY.mdまたはHEARTBEAT.mdへ要約して反映すること。read_workspace_doc / append_workspace_doc / replace_workspace_docを優先すること。",
+		"MEMORY.md には時刻・日付・曜日などのタイムスタンプ情報を原則書かないこと。期限や実施時刻が必須な運用情報のみ例外とすること。",
+		"MEMORY.md は user_id ごとの見出しで整理し、今回の発話者に関係する項目を優先して参照・更新すること。",
+		"MEMORY.md の更新は毎ターン必須ではない。長期再利用価値がある新事実があるときだけ更新すること。",
+		"MEMORY更新では read_workspace_doc を先に使い、軽微な追記は append_workspace_doc を優先すること。replace_workspace_doc は大規模整理や矛盾解消時のみ使うこと。",
+		"ユーザーから『覚えて』と言われた内容は、MEMORY.mdまたはHEARTBEAT.mdへ要約して反映すること。",
 		"指定チャンネルの趣旨に合わせて口調と出力内容を調整すること。",
 	}, "\n")
 }
 
 func formatRuntimeMessage(message RuntimeMessage) string {
-	created := ""
-	if !message.CreatedAt.IsZero() {
-		created = message.CreatedAt.UTC().Format(time.RFC3339)
-	}
-	meta := fmt.Sprintf("[%s] %s (%s, Message ID: %s)", created, valueOrFallback(message.AuthorName, "unknown"), valueOrFallback(message.AuthorID, "unknown"), valueOrFallback(message.ID, "unknown"))
+	meta := fmt.Sprintf("%s (%s, Message ID: %s)", valueOrFallback(message.AuthorName, "unknown"), valueOrFallback(message.AuthorID, "unknown"), valueOrFallback(message.ID, "unknown"))
 	content := strings.TrimSpace(message.Content)
 	if content == "" {
 		content = "(empty)"
 	}
 	return meta + "\n" + content
+}
+
+func buildMemoryFocusSection(instructions WorkspaceInstructions, input MessageInput) string {
+	memoryText := strings.TrimSpace(instructions.Content["MEMORY.md"])
+	if memoryText == "" {
+		return ""
+	}
+	lines := extractMemoryFocusLines(memoryText, input.Current.AuthorID, input.Current.AuthorName, 12)
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\n## MEMORY参照（今回の話者関連）\n\n" + strings.Join(lines, "\n")
+}
+
+func extractMemoryFocusLines(memoryText string, authorID string, authorName string, maxLines int) []string {
+	text := strings.TrimSpace(memoryText)
+	if text == "" || maxLines <= 0 {
+		return nil
+	}
+	keys := uniqueMemoryFocusKeys(authorID, authorName)
+	if len(keys) == 0 {
+		return nil
+	}
+	source := strings.Split(text, "\n")
+	out := make([]string, 0, maxLines)
+	seen := map[string]struct{}{}
+	for i := 0; i < len(source) && len(out) < maxLines; i++ {
+		line := strings.TrimSpace(source[i])
+		if line == "" || !lineContainsAnyFold(line, keys) {
+			continue
+		}
+		if header, ok := nearestSectionHeader(source, i); ok {
+			key := "header:" + header
+			if _, exists := seen[key]; !exists && len(out) < maxLines {
+				seen[key] = struct{}{}
+				out = append(out, header)
+			}
+		}
+		key := "line:" + line
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, line)
+	}
+	return out
+}
+
+func uniqueMemoryFocusKeys(authorID string, authorName string) []string {
+	keys := make([]string, 0, 2)
+	seen := map[string]struct{}{}
+	for _, raw := range []string{authorID, authorName} {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		lowered := strings.ToLower(trimmed)
+		if _, ok := seen[lowered]; ok {
+			continue
+		}
+		seen[lowered] = struct{}{}
+		keys = append(keys, lowered)
+	}
+	return keys
+}
+
+func lineContainsAnyFold(line string, keys []string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(line))
+	if lowered == "" {
+		return false
+	}
+	for _, key := range keys {
+		if key != "" && strings.Contains(lowered, key) {
+			return true
+		}
+	}
+	return false
+}
+
+func nearestSectionHeader(lines []string, index int) (string, bool) {
+	if len(lines) == 0 || index <= 0 {
+		return "", false
+	}
+	for i := index - 1; i >= 0; i-- {
+		header := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(header, "#") {
+			return header, true
+		}
+		if header != "" && !strings.HasPrefix(header, "-") && !strings.HasPrefix(header, "*") {
+			break
+		}
+	}
+	return "", false
 }
 
 func valueOrFallback(value string, fallback string) string {

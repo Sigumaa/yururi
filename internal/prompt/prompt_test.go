@@ -30,6 +30,12 @@ func TestBuildMessageBundle(t *testing.T) {
 		Content: map[string]string{
 			"YURURI.md": "# YURURI",
 			"SOUL.md":   "# SOUL",
+			"MEMORY.md": strings.Join([]string{
+				"# MEMORY.md",
+				"## Users",
+				"- user:u1 は長文より短文を好む",
+				"- user:u2 は丁寧語を好む",
+			}, "\n"),
 		},
 	}
 	bundle := BuildMessageBundle(ins, MessageInput{
@@ -63,6 +69,9 @@ func TestBuildMessageBundle(t *testing.T) {
 	if !strings.Contains(bundle.UserPrompt, "ゆるり、これ見えてる？") {
 		t.Fatalf("UserPrompt missing current message: %q", bundle.UserPrompt)
 	}
+	if strings.Contains(bundle.UserPrompt, "2026-02-26T12:00:00Z") {
+		t.Fatalf("UserPrompt should not include timestamp: %q", bundle.UserPrompt)
+	}
 	if !strings.Contains(bundle.UserPrompt, "バースト統合件数: 4") {
 		t.Fatalf("UserPrompt missing merged count: %q", bundle.UserPrompt)
 	}
@@ -72,11 +81,23 @@ func TestBuildMessageBundle(t *testing.T) {
 	if !strings.Contains(bundle.DeveloperInstructions, "reply_message または send_message") {
 		t.Fatalf("DeveloperInstructions missing explicit delivery guidance: %q", bundle.DeveloperInstructions)
 	}
-	if !strings.Contains(bundle.DeveloperInstructions, "read_workspace_doc / append_workspace_doc / replace_workspace_doc") {
-		t.Fatalf("DeveloperInstructions missing workspace doc tool priority guidance: %q", bundle.DeveloperInstructions)
+	if !strings.Contains(bundle.DeveloperInstructions, "軽微な追記は append_workspace_doc を優先") {
+		t.Fatalf("DeveloperInstructions missing append priority guidance: %q", bundle.DeveloperInstructions)
 	}
 	if !strings.Contains(bundle.DeveloperInstructions, "要約してMEMORY.md") {
 		t.Fatalf("DeveloperInstructions missing MEMORY summarization guidance: %q", bundle.DeveloperInstructions)
+	}
+	if !strings.Contains(bundle.DeveloperInstructions, "タイムスタンプ情報を原則書かない") {
+		t.Fatalf("DeveloperInstructions missing no timestamp guidance: %q", bundle.DeveloperInstructions)
+	}
+	if !strings.Contains(bundle.DeveloperInstructions, "更新は毎ターン必須ではない") {
+		t.Fatalf("DeveloperInstructions missing sparse update guidance: %q", bundle.DeveloperInstructions)
+	}
+	if !strings.Contains(bundle.UserPrompt, "## MEMORY参照（今回の話者関連）") {
+		t.Fatalf("UserPrompt missing memory focus section: %q", bundle.UserPrompt)
+	}
+	if !strings.Contains(bundle.UserPrompt, "user:u1 は長文より短文を好む") {
+		t.Fatalf("UserPrompt missing focused memory line: %q", bundle.UserPrompt)
 	}
 }
 
@@ -89,5 +110,30 @@ func TestBuildHeartbeatBundle(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(bundle.UserPrompt), "due tasks") {
 		t.Fatalf("heartbeat prompt should not include due tasks section: %q", bundle.UserPrompt)
+	}
+}
+
+func TestExtractMemoryFocusLines(t *testing.T) {
+	t.Parallel()
+
+	memory := strings.Join([]string{
+		"# MEMORY.md",
+		"## Users",
+		"- user:u1 は短文を好む",
+		"- user:u2 は詳細説明を好む",
+		"## Channel",
+		"- channel:times は独り言運用",
+		"- user:u1 は times で絵文字少なめ",
+	}, "\n")
+	got := extractMemoryFocusLines(memory, "u1", "shiyui", 5)
+	if len(got) == 0 {
+		t.Fatal("extractMemoryFocusLines() returned empty, want focused lines")
+	}
+	joined := strings.Join(got, "\n")
+	if !strings.Contains(joined, "user:u1 は短文を好む") {
+		t.Fatalf("extractMemoryFocusLines() missing u1 line: %v", got)
+	}
+	if strings.Contains(joined, "user:u2 は詳細説明を好む") {
+		t.Fatalf("extractMemoryFocusLines() should not include unrelated user line: %v", got)
 	}
 }
