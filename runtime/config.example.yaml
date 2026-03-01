@@ -1,7 +1,9 @@
 discord:
   token: "YOUR_DISCORD_BOT_TOKEN"
   guild_id: "YOUR_GUILD_ID"
-  target_channel_ids:
+  read_channel_ids:
+    - "READ_CHANNEL_ID"
+  write_channel_ids:
     - "TARGET_CHANNEL_ID"
   observe_channel_ids: []
   observe_category_ids: []
@@ -25,7 +27,19 @@ mcp:
   bind: "127.0.0.1:39393"
   url: "http://127.0.0.1:39393/mcp"
   tool_policy:
-    allow_patterns: []
+    allow_patterns:
+      - "read_message_history"
+      - "send_message"
+      - "reply_message"
+      - "add_reaction"
+      - "start_typing"
+      - "list_channels"
+      - "get_user_detail"
+      - "get_current_time"
+      - "x_search"
+      - "read_workspace_doc"
+      - "append_workspace_doc"
+      - "replace_workspace_doc"
     deny_patterns: []
 heartbeat:
   enabled: true

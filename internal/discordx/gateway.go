@@ -2,6 +2,8 @@ package discordx
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,6 +17,7 @@ import (
 const (
 	defaultHistoryLimit = 20
 	maxHistoryLimit     = 100
+	duplicateWindow     = 10 * time.Minute
 )
 
 type Message struct {
@@ -49,18 +52,40 @@ type Gateway struct {
 
 	typingMu    sync.Mutex
 	typingStops map[string]context.CancelFunc
+
+	dedupMu          sync.Mutex
+	recentContentMap map[string]map[string]time.Time
+}
+
+type DuplicateSuppressedError struct {
+	ChannelID string
+}
+
+func (e *DuplicateSuppressedError) Error() string {
+	return fmt.Sprintf("duplicate message suppressed in channel %s", strings.TrimSpace(e.ChannelID))
+}
+
+func IsDuplicateSuppressed(err error) bool {
+	var target *DuplicateSuppressedError
+	return errors.As(err, &target)
 }
 
 func NewGateway(session *discordgo.Session, cfg config.DiscordConfig) *Gateway {
-	writable := make(map[string]struct{}, len(cfg.TargetChannelIDs))
-	readable := make(map[string]struct{}, len(cfg.TargetChannelIDs)+len(cfg.ObserveChannelIDs))
-	for _, id := range cfg.TargetChannelIDs {
+	writable := make(map[string]struct{}, len(cfg.WriteChannelIDs))
+	readable := make(map[string]struct{}, len(cfg.ReadChannelIDs)+len(cfg.ObserveChannelIDs))
+	for _, id := range cfg.ReadChannelIDs {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			continue
+		}
+		readable[trimmed] = struct{}{}
+	}
+	for _, id := range cfg.WriteChannelIDs {
 		trimmed := strings.TrimSpace(id)
 		if trimmed == "" {
 			continue
 		}
 		writable[trimmed] = struct{}{}
-		readable[trimmed] = struct{}{}
 	}
 	for _, id := range cfg.ObserveChannelIDs {
 		trimmed := strings.TrimSpace(id)
@@ -81,6 +106,7 @@ func NewGateway(session *discordgo.Session, cfg config.DiscordConfig) *Gateway {
 		readableChannels: readable,
 		excludedChannel:  excluded,
 		typingStops:      map[string]context.CancelFunc{},
+		recentContentMap: map[string]map[string]time.Time{},
 	}
 }
 
@@ -156,10 +182,14 @@ func (g *Gateway) SendMessage(ctx context.Context, channelID string, content str
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	if g.isDuplicateContent(channelID, text) {
+		return "", &DuplicateSuppressedError{ChannelID: channelID}
+	}
 	msg, err := g.session.ChannelMessageSendComplex(channelID, buildMessageSend(text))
 	if err != nil {
 		return "", fmt.Errorf("send message: %w", err)
 	}
+	g.rememberContent(channelID, text)
 	return msg.ID, nil
 }
 
@@ -177,10 +207,14 @@ func (g *Gateway) ReplyMessage(ctx context.Context, channelID string, replyToMes
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	if g.isDuplicateContent(channelID, text) {
+		return "", &DuplicateSuppressedError{ChannelID: channelID}
+	}
 	msg, err := g.session.ChannelMessageSendComplex(channelID, buildReplyMessageSend(g.guildID, channelID, replyToMessageID, text))
 	if err != nil {
 		return "", fmt.Errorf("send reply: %w", err)
 	}
+	g.rememberContent(channelID, text)
 	return msg.ID, nil
 }
 
@@ -325,7 +359,7 @@ func (g *Gateway) validateWritableChannel(channelID string) error {
 		return fmt.Errorf("channel %s is excluded", channelID)
 	}
 	if _, ok := g.writableChannels[channelID]; !ok {
-		return fmt.Errorf("channel %s is not in target_channel_ids", channelID)
+		return fmt.Errorf("channel %s is not in write_channel_ids", channelID)
 	}
 	return nil
 }
@@ -339,7 +373,7 @@ func (g *Gateway) validateReadableChannel(channelID string) error {
 		return fmt.Errorf("channel %s is excluded", channelID)
 	}
 	if _, ok := g.readableChannels[channelID]; !ok {
-		return fmt.Errorf("channel %s is not in target_channel_ids or observe_channel_ids", channelID)
+		return fmt.Errorf("channel %s is not in read_channel_ids or observe_channel_ids", channelID)
 	}
 	return nil
 }
@@ -371,4 +405,64 @@ func sortStrings(values []string) {
 			}
 		}
 	}
+}
+
+func (g *Gateway) isDuplicateContent(channelID string, content string) bool {
+	channelID = strings.TrimSpace(channelID)
+	signature := dedupSignature(content)
+	if channelID == "" || signature == "" {
+		return false
+	}
+	now := time.Now().UTC()
+	threshold := now.Add(-duplicateWindow)
+
+	g.dedupMu.Lock()
+	defer g.dedupMu.Unlock()
+
+	channelMap, ok := g.recentContentMap[channelID]
+	if !ok {
+		return false
+	}
+	for hash, ts := range channelMap {
+		if ts.Before(threshold) {
+			delete(channelMap, hash)
+		}
+	}
+	if len(channelMap) == 0 {
+		delete(g.recentContentMap, channelID)
+		return false
+	}
+	last, ok := channelMap[signature]
+	if !ok {
+		return false
+	}
+	return !last.Before(threshold)
+}
+
+func (g *Gateway) rememberContent(channelID string, content string) {
+	channelID = strings.TrimSpace(channelID)
+	signature := dedupSignature(content)
+	if channelID == "" || signature == "" {
+		return
+	}
+	now := time.Now().UTC()
+
+	g.dedupMu.Lock()
+	defer g.dedupMu.Unlock()
+
+	channelMap, ok := g.recentContentMap[channelID]
+	if !ok {
+		channelMap = map[string]time.Time{}
+		g.recentContentMap[channelID] = channelMap
+	}
+	channelMap[signature] = now
+}
+
+func dedupSignature(content string) string {
+	normalized := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(content)), " "))
+	if normalized == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(sum[:])
 }

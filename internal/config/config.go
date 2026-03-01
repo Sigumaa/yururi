@@ -39,7 +39,8 @@ type Config struct {
 type DiscordConfig struct {
 	Token              string   `yaml:"token"`
 	GuildID            string   `yaml:"guild_id"`
-	TargetChannelIDs   []string `yaml:"target_channel_ids"`
+	ReadChannelIDs     []string `yaml:"read_channel_ids"`
+	WriteChannelIDs    []string `yaml:"write_channel_ids"`
 	ObserveChannelIDs  []string `yaml:"observe_channel_ids"`
 	ObserveCategoryIDs []string `yaml:"observe_category_ids"`
 	ExcludedChannelIDs []string `yaml:"excluded_channel_ids"`
@@ -157,8 +158,11 @@ func (c Config) Validate() error {
 	if c.Discord.GuildID == "" {
 		return errors.New("discord.guild_id is required")
 	}
-	if len(c.Discord.TargetChannelIDs) == 0 {
-		return errors.New("discord.target_channel_ids is required")
+	if len(c.Discord.ReadChannelIDs) == 0 {
+		return errors.New("discord.read_channel_ids is required")
+	}
+	if !isSubset(c.Discord.WriteChannelIDs, c.Discord.ReadChannelIDs) {
+		return errors.New("discord.write_channel_ids must be subset of discord.read_channel_ids")
 	}
 	if c.Codex.Command == "" {
 		return errors.New("codex.command is required")
@@ -240,7 +244,8 @@ func (c *Config) normalize() {
 	if c.XAI.TimeoutSec <= 0 {
 		c.XAI.TimeoutSec = defaultXAITimeoutSec
 	}
-	c.Discord.TargetChannelIDs = cleanList(c.Discord.TargetChannelIDs)
+	c.Discord.ReadChannelIDs = cleanList(c.Discord.ReadChannelIDs)
+	c.Discord.WriteChannelIDs = cleanList(c.Discord.WriteChannelIDs)
 	c.Discord.ObserveChannelIDs = cleanList(c.Discord.ObserveChannelIDs)
 	c.Discord.ObserveCategoryIDs = cleanList(c.Discord.ObserveCategoryIDs)
 	c.Discord.ExcludedChannelIDs = cleanList(c.Discord.ExcludedChannelIDs)
@@ -263,7 +268,8 @@ func applyEnvOverrides(cfg *Config) {
 
 	applyString("DISCORD_TOKEN", &cfg.Discord.Token)
 	applyString("DISCORD_GUILD_ID", &cfg.Discord.GuildID)
-	applyList("DISCORD_TARGET_CHANNEL_IDS", &cfg.Discord.TargetChannelIDs)
+	applyList("DISCORD_READ_CHANNEL_IDS", &cfg.Discord.ReadChannelIDs)
+	applyList("DISCORD_WRITE_CHANNEL_IDS", &cfg.Discord.WriteChannelIDs)
 	applyList("DISCORD_OBSERVE_CHANNEL_IDS", &cfg.Discord.ObserveChannelIDs)
 	applyList("DISCORD_OBSERVE_CATEGORY_IDS", &cfg.Discord.ObserveCategoryIDs)
 	applyList("DISCORD_EXCLUDED_CHANNEL_IDS", &cfg.Discord.ExcludedChannelIDs)
@@ -426,4 +432,20 @@ func setCurrentMCPToolPolicy(policy MCPToolPolicyConfig) {
 		AllowPatterns: append([]string(nil), policy.AllowPatterns...),
 		DenyPatterns:  append([]string(nil), policy.DenyPatterns...),
 	}
+}
+
+func isSubset(sub []string, sup []string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	allowed := make(map[string]struct{}, len(sup))
+	for _, value := range sup {
+		allowed[value] = struct{}{}
+	}
+	for _, value := range sub {
+		if _, ok := allowed[value]; !ok {
+			return false
+		}
+	}
+	return true
 }

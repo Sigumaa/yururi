@@ -12,7 +12,8 @@ func TestLoadSetsDefaults(t *testing.T) {
 	body := `discord:
   token: "token"
   guild_id: "guild"
-  target_channel_ids: ["channel"]
+  read_channel_ids: ["channel"]
+  write_channel_ids: ["channel"]
 persona:
   owner_user_id: "owner"
 codex:
@@ -67,7 +68,8 @@ func TestLoadAppliesEnvOverrides(t *testing.T) {
 	body := `discord:
   token: "token"
   guild_id: "guild"
-  target_channel_ids: ["channel"]
+  read_channel_ids: ["channel"]
+  write_channel_ids: ["channel"]
 persona:
   owner_user_id: "owner"
 codex:
@@ -86,6 +88,8 @@ mcp:
 	t.Setenv("MCP_URL", "http://127.0.0.1:44444/mcp")
 	t.Setenv("MCP_TOOL_POLICY_ALLOW_PATTERNS", "read_*, get_current_time")
 	t.Setenv("MCP_TOOL_POLICY_DENY_PATTERNS", "replace_workspace_doc")
+	t.Setenv("DISCORD_READ_CHANNEL_IDS", "read-1,read-2")
+	t.Setenv("DISCORD_WRITE_CHANNEL_IDS", "read-2")
 	t.Setenv("DISCORD_OBSERVE_CHANNEL_IDS", "observe-1,observe-2")
 	t.Setenv("DISCORD_OBSERVE_CATEGORY_IDS", "cat-1,cat-2")
 	t.Setenv("HEARTBEAT_ENABLED", "false")
@@ -129,6 +133,12 @@ mcp:
 	if cfg.XAI.TimeoutSec != 45 {
 		t.Fatalf("XAI.TimeoutSec = %d", cfg.XAI.TimeoutSec)
 	}
+	if got, want := cfg.Discord.ReadChannelIDs, []string{"read-1", "read-2"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("Discord.ReadChannelIDs = %v, want %v", got, want)
+	}
+	if got, want := cfg.Discord.WriteChannelIDs, []string{"read-2"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("Discord.WriteChannelIDs = %v, want %v", got, want)
+	}
 	if got, want := cfg.Discord.ObserveChannelIDs, []string{"observe-1", "observe-2"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("Discord.ObserveChannelIDs = %v, want %v", got, want)
 	}
@@ -150,7 +160,8 @@ func TestLoadRequiresXAIKeyWhenEnabled(t *testing.T) {
 	body := `discord:
   token: "token"
   guild_id: "guild"
-  target_channel_ids: ["channel"]
+  read_channel_ids: ["channel"]
+  write_channel_ids: ["channel"]
 persona:
   owner_user_id: "owner"
 codex:
@@ -168,13 +179,37 @@ xai:
 	}
 }
 
+func TestLoadRejectsWriteChannelsOutsideReadChannels(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	body := `discord:
+  token: "token"
+  guild_id: "guild"
+  read_channel_ids: ["read-a"]
+  write_channel_ids: ["write-b"]
+persona:
+  owner_user_id: "owner"
+codex:
+  command: "codex"
+  args: ["--search", "app-server", "--listen", "stdio://"]
+`
+	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if _, err := Load(cfgPath); err == nil {
+		t.Fatal("Load() error = nil, want subset validation error")
+	}
+}
+
 func TestLoadAppliesMCPBearerTokenFromConfig(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
 	body := `discord:
   token: "token"
   guild_id: "guild"
-  target_channel_ids: ["channel"]
+  read_channel_ids: ["channel"]
+  write_channel_ids: ["channel"]
 persona:
   owner_user_id: "owner"
 codex:
@@ -215,7 +250,8 @@ func TestLoadEnvTwilogTokenOverridesConfigBearerToken(t *testing.T) {
 	body := `discord:
   token: "token"
   guild_id: "guild"
-  target_channel_ids: ["channel"]
+  read_channel_ids: ["channel"]
+  write_channel_ids: ["channel"]
 persona:
   owner_user_id: "owner"
 codex:
@@ -257,7 +293,8 @@ func TestLoadRewritesExistingMCPRemoteAuthorizationHeader(t *testing.T) {
 	body := `discord:
   token: "token"
   guild_id: "guild"
-  target_channel_ids: ["channel"]
+  read_channel_ids: ["channel"]
+  write_channel_ids: ["channel"]
 persona:
   owner_user_id: "owner"
 codex:

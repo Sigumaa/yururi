@@ -19,7 +19,6 @@
    - `discord.guild_id`
    - `discord.read_channel_ids[]`
    - `discord.write_channel_ids[]`
-   - `discord.target_channel_ids[]`
    - `discord.observe_channel_ids[]`
    - `discord.observe_category_ids[]`
    - `discord.excluded_channel_ids[]`

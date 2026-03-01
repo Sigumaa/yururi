@@ -17,8 +17,8 @@ func Evaluate(discordCfg config.DiscordConfig, msg Incoming) (bool, string) {
 	if msg.GuildID != discordCfg.GuildID {
 		return false, "guild_not_allowed"
 	}
-	if !contains(discordCfg.TargetChannelIDs, msg.ChannelID) {
-		return false, "channel_not_target"
+	if !contains(discordCfg.ReadChannelIDs, msg.ChannelID) {
+		return false, "channel_not_readable"
 	}
 	if contains(discordCfg.ExcludedChannelIDs, msg.ChannelID) {
 		return false, "channel_excluded"

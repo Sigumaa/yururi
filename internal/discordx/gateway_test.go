@@ -73,7 +73,8 @@ func TestGatewayChannelValidation(t *testing.T) {
 
 	gateway := NewGateway(nil, config.DiscordConfig{
 		GuildID:           "g1",
-		TargetChannelIDs:  []string{"c-target"},
+		ReadChannelIDs:    []string{"c-target"},
+		WriteChannelIDs:   []string{"c-target"},
 		ObserveChannelIDs: []string{"c-observe"},
 	})
 
@@ -88,6 +89,19 @@ func TestGatewayChannelValidation(t *testing.T) {
 	}
 	if err := gateway.validateWritableChannel("c-observe"); err == nil {
 		t.Fatal("validateWritableChannel(observe) error = nil, want error")
+	}
+}
+
+func TestGatewayDuplicateSignatureNormalization(t *testing.T) {
+	t.Parallel()
+
+	first := dedupSignature(" Hello   World ")
+	second := dedupSignature("hello world")
+	if first == "" || second == "" {
+		t.Fatal("dedupSignature() returned empty")
+	}
+	if first != second {
+		t.Fatalf("dedupSignature mismatch: %q != %q", first, second)
 	}
 }
 

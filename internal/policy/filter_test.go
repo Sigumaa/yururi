@@ -11,7 +11,7 @@ func TestShouldProcess(t *testing.T) {
 
 	cfg := config.DiscordConfig{
 		GuildID:            "guild-1",
-		TargetChannelIDs:   []string{"chan-a", "chan-b"},
+		ReadChannelIDs:     []string{"chan-a", "chan-b"},
 		ExcludedChannelIDs: []string{"chan-b"},
 		AllowedBotUserIDs:  []string{"bot-allowed"},
 	}
@@ -115,7 +115,7 @@ func TestEvaluate(t *testing.T) {
 
 	cfg := config.DiscordConfig{
 		GuildID:            "guild-1",
-		TargetChannelIDs:   []string{"chan-a", "chan-b"},
+		ReadChannelIDs:     []string{"chan-a", "chan-b"},
 		ExcludedChannelIDs: []string{"chan-b"},
 		AllowedBotUserIDs:  []string{"bot-allowed"},
 	}
@@ -153,7 +153,7 @@ func TestEvaluate(t *testing.T) {
 				AuthorID:  "user-1",
 			},
 			want:       false,
-			wantReason: "channel_not_target",
+			wantReason: "channel_not_readable",
 		},
 		{
 			name: "channel excluded",

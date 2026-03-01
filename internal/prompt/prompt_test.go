@@ -66,6 +66,9 @@ func TestBuildMessageBundle(t *testing.T) {
 	if !strings.Contains(bundle.BaseInstructions, "4軸Markdown") {
 		t.Fatalf("BaseInstructions missing 4-axis markdown guidance: %q", bundle.BaseInstructions)
 	}
+	if !strings.Contains(bundle.BaseInstructions, "Discord Bot") {
+		t.Fatalf("BaseInstructions missing bot self-awareness guidance: %q", bundle.BaseInstructions)
+	}
 	if !strings.Contains(bundle.UserPrompt, "ゆるり、これ見えてる？") {
 		t.Fatalf("UserPrompt missing current message: %q", bundle.UserPrompt)
 	}

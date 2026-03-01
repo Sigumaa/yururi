@@ -2,6 +2,8 @@ package mcpserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,9 +31,13 @@ type Server struct {
 	mcpServer       *mcp.Server
 	httpServer      *http.Server
 	docMu           sync.Mutex
+
+	toolUsageMu     sync.Mutex
+	toolUsageBySess map[string]*toolUsageState
 }
 
 var ErrToolDenied = errors.New("mcp tool denied by policy")
+var ErrToolUsageLimited = errors.New("mcp tool blocked by usage limit")
 
 type EmptyArgs struct{}
 
@@ -68,7 +74,9 @@ type ReplyMessageArgs struct {
 }
 
 type MessageResult struct {
-	MessageID string `json:"message_id"`
+	MessageID  string `json:"message_id,omitempty"`
+	Suppressed bool   `json:"suppressed,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 type AddReactionArgs struct {
@@ -151,6 +159,19 @@ type WorkspaceDocResult struct {
 
 const maxMCPToolLogValueLen = 280
 
+const (
+	defaultMaxToolCallsPerTurn   = 3
+	defaultMaxSameArgsRetryCalls = 2
+	toolUsageTurnIdleReset       = 8 * time.Second
+)
+
+type toolUsageState struct {
+	turnToken   string
+	lastCallAt  time.Time
+	callCount   int
+	argumentHit map[string]int
+}
+
 func New(bind string, defaultTimezone string, workspaceDir string, discord *discordx.Gateway, xaiClient *xai.Client, policyOverrides ...config.MCPToolPolicyConfig) (*Server, error) {
 	bind = strings.TrimSpace(bind)
 	if bind == "" {
@@ -187,6 +208,7 @@ func New(bind string, defaultTimezone string, workspaceDir string, discord *disc
 		discord:         discord,
 		xai:             xaiClient,
 		mcpServer:       m,
+		toolUsageBySess: map[string]*toolUsageState{},
 	}
 	s.registerTools()
 
@@ -314,9 +336,13 @@ func (s *Server) registerTools() {
 	}, s.handleReplaceWorkspaceDoc)
 }
 
-func (s *Server) handleReadMessageHistory(ctx context.Context, _ *mcp.CallToolRequest, args ReadHistoryArgs) (*mcp.CallToolResult, ReadHistoryResult, error) {
+func (s *Server) handleReadMessageHistory(ctx context.Context, req *mcp.CallToolRequest, args ReadHistoryArgs) (*mcp.CallToolResult, ReadHistoryResult, error) {
 	started := logMCPToolStart("read_message_history", args)
 	if err := s.enforceToolPolicy("read_message_history"); err != nil {
+		logMCPToolFailed("read_message_history", started, err)
+		return nil, ReadHistoryResult{}, err
+	}
+	if err := s.enforceToolUsage(req, "read_message_history", args); err != nil {
 		logMCPToolFailed("read_message_history", started, err)
 		return nil, ReadHistoryResult{}, err
 	}
@@ -343,14 +369,27 @@ func (s *Server) handleReadMessageHistory(ctx context.Context, _ *mcp.CallToolRe
 	return nil, result, nil
 }
 
-func (s *Server) handleSendMessage(ctx context.Context, _ *mcp.CallToolRequest, args SendMessageArgs) (*mcp.CallToolResult, MessageResult, error) {
+func (s *Server) handleSendMessage(ctx context.Context, req *mcp.CallToolRequest, args SendMessageArgs) (*mcp.CallToolResult, MessageResult, error) {
 	started := logMCPToolStart("send_message", args)
 	if err := s.enforceToolPolicy("send_message"); err != nil {
 		logMCPToolFailed("send_message", started, err)
 		return nil, MessageResult{}, err
 	}
+	if err := s.enforceToolUsage(req, "send_message", args); err != nil {
+		logMCPToolFailed("send_message", started, err)
+		return nil, MessageResult{}, err
+	}
 	id, err := s.discord.SendMessage(ctx, args.ChannelID, args.Content)
 	if err != nil {
+		if discordx.IsDuplicateSuppressed(err) {
+			result := MessageResult{
+				Suppressed: true,
+				Reason:     "duplicate_content",
+			}
+			log.Printf("event=message_duplicate_suppressed tool=send_message channel=%s", strings.TrimSpace(args.ChannelID))
+			logMCPToolCompleted("send_message", started, result)
+			return nil, result, nil
+		}
 		logMCPToolFailed("send_message", started, err)
 		return nil, MessageResult{}, err
 	}
@@ -359,14 +398,27 @@ func (s *Server) handleSendMessage(ctx context.Context, _ *mcp.CallToolRequest, 
 	return nil, result, nil
 }
 
-func (s *Server) handleReplyMessage(ctx context.Context, _ *mcp.CallToolRequest, args ReplyMessageArgs) (*mcp.CallToolResult, MessageResult, error) {
+func (s *Server) handleReplyMessage(ctx context.Context, req *mcp.CallToolRequest, args ReplyMessageArgs) (*mcp.CallToolResult, MessageResult, error) {
 	started := logMCPToolStart("reply_message", args)
 	if err := s.enforceToolPolicy("reply_message"); err != nil {
 		logMCPToolFailed("reply_message", started, err)
 		return nil, MessageResult{}, err
 	}
+	if err := s.enforceToolUsage(req, "reply_message", args); err != nil {
+		logMCPToolFailed("reply_message", started, err)
+		return nil, MessageResult{}, err
+	}
 	id, err := s.discord.ReplyMessage(ctx, args.ChannelID, args.ReplyToMessageID, args.Content)
 	if err != nil {
+		if discordx.IsDuplicateSuppressed(err) {
+			result := MessageResult{
+				Suppressed: true,
+				Reason:     "duplicate_content",
+			}
+			log.Printf("event=message_duplicate_suppressed tool=reply_message channel=%s", strings.TrimSpace(args.ChannelID))
+			logMCPToolCompleted("reply_message", started, result)
+			return nil, result, nil
+		}
 		logMCPToolFailed("reply_message", started, err)
 		return nil, MessageResult{}, err
 	}
@@ -375,9 +427,13 @@ func (s *Server) handleReplyMessage(ctx context.Context, _ *mcp.CallToolRequest,
 	return nil, result, nil
 }
 
-func (s *Server) handleAddReaction(ctx context.Context, _ *mcp.CallToolRequest, args AddReactionArgs) (*mcp.CallToolResult, SimpleOK, error) {
+func (s *Server) handleAddReaction(ctx context.Context, req *mcp.CallToolRequest, args AddReactionArgs) (*mcp.CallToolResult, SimpleOK, error) {
 	started := logMCPToolStart("add_reaction", args)
 	if err := s.enforceToolPolicy("add_reaction"); err != nil {
+		logMCPToolFailed("add_reaction", started, err)
+		return nil, SimpleOK{}, err
+	}
+	if err := s.enforceToolUsage(req, "add_reaction", args); err != nil {
 		logMCPToolFailed("add_reaction", started, err)
 		return nil, SimpleOK{}, err
 	}
@@ -390,9 +446,13 @@ func (s *Server) handleAddReaction(ctx context.Context, _ *mcp.CallToolRequest, 
 	return nil, result, nil
 }
 
-func (s *Server) handleStartTyping(ctx context.Context, _ *mcp.CallToolRequest, args StartTypingArgs) (*mcp.CallToolResult, SimpleOK, error) {
+func (s *Server) handleStartTyping(ctx context.Context, req *mcp.CallToolRequest, args StartTypingArgs) (*mcp.CallToolResult, SimpleOK, error) {
 	started := logMCPToolStart("start_typing", args)
 	if err := s.enforceToolPolicy("start_typing"); err != nil {
+		logMCPToolFailed("start_typing", started, err)
+		return nil, SimpleOK{}, err
+	}
+	if err := s.enforceToolUsage(req, "start_typing", args); err != nil {
 		logMCPToolFailed("start_typing", started, err)
 		return nil, SimpleOK{}, err
 	}
@@ -406,9 +466,13 @@ func (s *Server) handleStartTyping(ctx context.Context, _ *mcp.CallToolRequest, 
 	return nil, result, nil
 }
 
-func (s *Server) handleListChannels(ctx context.Context, _ *mcp.CallToolRequest, _ EmptyArgs) (*mcp.CallToolResult, ListChannelsResult, error) {
+func (s *Server) handleListChannels(ctx context.Context, req *mcp.CallToolRequest, _ EmptyArgs) (*mcp.CallToolResult, ListChannelsResult, error) {
 	started := logMCPToolStart("list_channels", EmptyArgs{})
 	if err := s.enforceToolPolicy("list_channels"); err != nil {
+		logMCPToolFailed("list_channels", started, err)
+		return nil, ListChannelsResult{}, err
+	}
+	if err := s.enforceToolUsage(req, "list_channels", EmptyArgs{}); err != nil {
 		logMCPToolFailed("list_channels", started, err)
 		return nil, ListChannelsResult{}, err
 	}
@@ -426,9 +490,13 @@ func (s *Server) handleListChannels(ctx context.Context, _ *mcp.CallToolRequest,
 	return nil, result, nil
 }
 
-func (s *Server) handleGetUserDetail(ctx context.Context, _ *mcp.CallToolRequest, args UserDetailArgs) (*mcp.CallToolResult, UserDetailResult, error) {
+func (s *Server) handleGetUserDetail(ctx context.Context, req *mcp.CallToolRequest, args UserDetailArgs) (*mcp.CallToolResult, UserDetailResult, error) {
 	started := logMCPToolStart("get_user_detail", args)
 	if err := s.enforceToolPolicy("get_user_detail"); err != nil {
+		logMCPToolFailed("get_user_detail", started, err)
+		return nil, UserDetailResult{}, err
+	}
+	if err := s.enforceToolUsage(req, "get_user_detail", args); err != nil {
 		logMCPToolFailed("get_user_detail", started, err)
 		return nil, UserDetailResult{}, err
 	}
@@ -447,9 +515,13 @@ func (s *Server) handleGetUserDetail(ctx context.Context, _ *mcp.CallToolRequest
 	return nil, result, nil
 }
 
-func (s *Server) handleGetCurrentTime(_ context.Context, _ *mcp.CallToolRequest, args CurrentTimeArgs) (*mcp.CallToolResult, CurrentTimeResult, error) {
+func (s *Server) handleGetCurrentTime(_ context.Context, req *mcp.CallToolRequest, args CurrentTimeArgs) (*mcp.CallToolResult, CurrentTimeResult, error) {
 	started := logMCPToolStart("get_current_time", args)
 	if err := s.enforceToolPolicy("get_current_time"); err != nil {
+		logMCPToolFailed("get_current_time", started, err)
+		return nil, CurrentTimeResult{}, err
+	}
+	if err := s.enforceToolUsage(req, "get_current_time", args); err != nil {
 		logMCPToolFailed("get_current_time", started, err)
 		return nil, CurrentTimeResult{}, err
 	}
@@ -472,9 +544,13 @@ func (s *Server) handleGetCurrentTime(_ context.Context, _ *mcp.CallToolRequest,
 	return nil, result, nil
 }
 
-func (s *Server) handleXSearch(ctx context.Context, _ *mcp.CallToolRequest, args XSearchArgs) (*mcp.CallToolResult, XSearchResult, error) {
+func (s *Server) handleXSearch(ctx context.Context, req *mcp.CallToolRequest, args XSearchArgs) (*mcp.CallToolResult, XSearchResult, error) {
 	started := logMCPToolStart("x_search", args)
 	if err := s.enforceToolPolicy("x_search"); err != nil {
+		logMCPToolFailed("x_search", started, err)
+		return nil, XSearchResult{}, err
+	}
+	if err := s.enforceToolUsage(req, "x_search", args); err != nil {
 		logMCPToolFailed("x_search", started, err)
 		return nil, XSearchResult{}, err
 	}
@@ -505,9 +581,13 @@ func (s *Server) handleXSearch(ctx context.Context, _ *mcp.CallToolRequest, args
 	return nil, out, nil
 }
 
-func (s *Server) handleReadWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
+func (s *Server) handleReadWorkspaceDoc(_ context.Context, req *mcp.CallToolRequest, args WorkspaceDocArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
 	started := logMCPToolStart("read_workspace_doc", args)
 	if err := s.enforceToolPolicy("read_workspace_doc"); err != nil {
+		logMCPToolFailed("read_workspace_doc", started, err)
+		return nil, WorkspaceDocResult{}, err
+	}
+	if err := s.enforceToolUsage(req, "read_workspace_doc", args); err != nil {
 		logMCPToolFailed("read_workspace_doc", started, err)
 		return nil, WorkspaceDocResult{}, err
 	}
@@ -530,9 +610,13 @@ func (s *Server) handleReadWorkspaceDoc(_ context.Context, _ *mcp.CallToolReques
 	return nil, result, nil
 }
 
-func (s *Server) handleAppendWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocWriteArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
+func (s *Server) handleAppendWorkspaceDoc(_ context.Context, req *mcp.CallToolRequest, args WorkspaceDocWriteArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
 	started := logMCPToolStart("append_workspace_doc", args)
 	if err := s.enforceToolPolicy("append_workspace_doc"); err != nil {
+		logMCPToolFailed("append_workspace_doc", started, err)
+		return nil, WorkspaceDocResult{}, err
+	}
+	if err := s.enforceToolUsage(req, "append_workspace_doc", args); err != nil {
 		logMCPToolFailed("append_workspace_doc", started, err)
 		return nil, WorkspaceDocResult{}, err
 	}
@@ -575,9 +659,13 @@ func (s *Server) handleAppendWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequ
 	return nil, result, nil
 }
 
-func (s *Server) handleReplaceWorkspaceDoc(_ context.Context, _ *mcp.CallToolRequest, args WorkspaceDocWriteArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
+func (s *Server) handleReplaceWorkspaceDoc(_ context.Context, req *mcp.CallToolRequest, args WorkspaceDocWriteArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
 	started := logMCPToolStart("replace_workspace_doc", args)
 	if err := s.enforceToolPolicy("replace_workspace_doc"); err != nil {
+		logMCPToolFailed("replace_workspace_doc", started, err)
+		return nil, WorkspaceDocResult{}, err
+	}
+	if err := s.enforceToolUsage(req, "replace_workspace_doc", args); err != nil {
 		logMCPToolFailed("replace_workspace_doc", started, err)
 		return nil, WorkspaceDocResult{}, err
 	}
@@ -623,6 +711,59 @@ func (s *Server) enforceToolPolicy(toolName string) error {
 	}
 	log.Printf("mcp tool denied: tool=%s reason=%q", toolName, reason)
 	return fmt.Errorf("%w: tool=%s reason=%s", ErrToolDenied, toolName, reason)
+}
+
+func (s *Server) enforceToolUsage(req *mcp.CallToolRequest, toolName string, args any) error {
+	now := time.Now().UTC()
+	sessionKey := toolUsageSessionKey(req)
+	turnToken := toolUsageTurnToken(req)
+	argSignature := toolUsageArgumentSignature(toolName, req, args)
+
+	s.toolUsageMu.Lock()
+	defer s.toolUsageMu.Unlock()
+
+	state, ok := s.toolUsageBySess[sessionKey]
+	if !ok {
+		state = &toolUsageState{}
+		s.toolUsageBySess[sessionKey] = state
+	}
+	if shouldResetToolUsageState(state, turnToken, now) {
+		state.callCount = 0
+		state.argumentHit = map[string]int{}
+		state.turnToken = turnToken
+	}
+	if state.argumentHit == nil {
+		state.argumentHit = map[string]int{}
+	}
+
+	nextCallCount := state.callCount + 1
+	if nextCallCount > defaultMaxToolCallsPerTurn {
+		return fmt.Errorf(
+			"%w: tool=%s reason=max_tool_calls_per_turn_exceeded limit=%d session=%s",
+			ErrToolUsageLimited,
+			toolName,
+			defaultMaxToolCallsPerTurn,
+			sessionKey,
+		)
+	}
+	nextArgHit := state.argumentHit[argSignature] + 1
+	if nextArgHit > defaultMaxSameArgsRetryCalls {
+		return fmt.Errorf(
+			"%w: tool=%s reason=same_arguments_retry_exceeded limit=%d session=%s",
+			ErrToolUsageLimited,
+			toolName,
+			defaultMaxSameArgsRetryCalls,
+			sessionKey,
+		)
+	}
+
+	state.callCount = nextCallCount
+	state.argumentHit[argSignature] = nextArgHit
+	state.lastCallAt = now
+	if turnToken != "" {
+		state.turnToken = turnToken
+	}
+	return nil
 }
 
 func durationMS(d time.Duration) int64 {
@@ -682,7 +823,7 @@ func (p toolPolicy) evaluate(toolName string) (bool, string) {
 		}
 	}
 	if len(p.allowPatterns) == 0 {
-		return true, "allowed by default"
+		return false, "allow patterns are empty (default deny)"
 	}
 	for _, pattern := range p.allowPatterns {
 		if matchToolPattern(pattern, name) {
@@ -739,4 +880,91 @@ func matchToolPattern(pattern string, value string) bool {
 		patternIndex++
 	}
 	return patternIndex == len(p)
+}
+
+func shouldResetToolUsageState(state *toolUsageState, turnToken string, now time.Time) bool {
+	if state == nil || state.callCount == 0 {
+		return true
+	}
+	if turnToken != "" {
+		return !strings.EqualFold(strings.TrimSpace(state.turnToken), strings.TrimSpace(turnToken))
+	}
+	if state.lastCallAt.IsZero() {
+		return true
+	}
+	return now.Sub(state.lastCallAt) > toolUsageTurnIdleReset
+}
+
+func toolUsageSessionKey(req *mcp.CallToolRequest) string {
+	if req == nil || req.Session == nil {
+		return "session:unknown"
+	}
+	id := strings.TrimSpace(req.Session.ID())
+	if id == "" {
+		return "session:unknown"
+	}
+	return "session:" + id
+}
+
+func toolUsageTurnToken(req *mcp.CallToolRequest) string {
+	if req == nil || req.Params == nil {
+		return ""
+	}
+	meta := map[string]any(req.Params.Meta)
+	if len(meta) == 0 {
+		return ""
+	}
+	for _, key := range []string{
+		"turn_id",
+		"turnId",
+		"expected_turn_id",
+		"expectedTurnId",
+		"run_id",
+		"runId",
+		"request_id",
+		"requestId",
+		"progress_token",
+		"progressToken",
+	} {
+		raw, ok := meta[key]
+		if !ok {
+			continue
+		}
+		if token := strings.TrimSpace(fmt.Sprint(raw)); token != "" {
+			return token
+		}
+	}
+	return ""
+}
+
+func toolUsageArgumentSignature(toolName string, req *mcp.CallToolRequest, args any) string {
+	payload := "{}"
+	if req != nil && req.Params != nil && len(req.Params.Arguments) > 0 {
+		normalized := normalizeJSONRaw(req.Params.Arguments)
+		if normalized != "" {
+			payload = normalized
+		}
+	} else if args != nil {
+		body, err := json.Marshal(args)
+		if err == nil {
+			payload = normalizeJSONRaw(body)
+		}
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(strings.ToLower(toolName)) + "|" + payload))
+	return hex.EncodeToString(sum[:])
+}
+
+func normalizeJSONRaw(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	body, err := json.Marshal(decoded)
+	if err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	return string(body)
 }

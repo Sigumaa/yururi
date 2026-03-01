@@ -14,12 +14,16 @@ import (
 	"github.com/sigumaa/yururi/internal/xai"
 )
 
+func allowAllPolicy() config.MCPToolPolicyConfig {
+	return config.MCPToolPolicyConfig{AllowPatterns: []string{"*"}}
+}
+
 func TestServerURL(t *testing.T) {
 	t.Parallel()
 
 	workspaceDir := t.TempDir()
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{})
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, allowAllPolicy())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -33,7 +37,7 @@ func TestHandleGetCurrentTime(t *testing.T) {
 
 	workspaceDir := t.TempDir()
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{})
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, allowAllPolicy())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -63,7 +67,7 @@ func TestWorkspaceDocReadWrite(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{})
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, allowAllPolicy())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -132,6 +136,19 @@ func TestToolPolicyEvaluateWildcardCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestToolPolicyEvaluateDefaultDeny(t *testing.T) {
+	t.Parallel()
+
+	policy := newToolPolicy(config.MCPToolPolicyConfig{})
+	allowed, reason := policy.evaluate("read_workspace_doc")
+	if allowed {
+		t.Fatal("policy.evaluate(read_workspace_doc) = allowed, want denied")
+	}
+	if reason != "allow patterns are empty (default deny)" {
+		t.Fatalf("policy.evaluate(read_workspace_doc) reason = %q", reason)
+	}
+}
+
 func TestHandleGetCurrentTimeDeniedByPolicy(t *testing.T) {
 	t.Parallel()
 
@@ -178,7 +195,7 @@ func TestHandleXSearchSuccess(t *testing.T) {
 		HTTPClient: xaiServer.Client(),
 	})
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, xaiClient, config.MCPToolPolicyConfig{})
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, xaiClient, allowAllPolicy())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -204,11 +221,61 @@ func TestHandleXSearchDisabled(t *testing.T) {
 	t.Parallel()
 
 	workspaceDir := t.TempDir()
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{})
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, allowAllPolicy())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
 	if _, _, err := srv.handleXSearch(context.Background(), nil, XSearchArgs{Query: "test"}); err == nil {
 		t.Fatal("handleXSearch() error = nil, want disabled error")
+	}
+}
+
+func TestHandleGetCurrentTimeUsageLimit(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{
+		AllowPatterns: []string{"get_current_time"},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	for i := 0; i < defaultMaxToolCallsPerTurn; i++ {
+		args := CurrentTimeArgs{Timezone: []string{"UTC", "Asia/Tokyo", "Europe/London"}[i]}
+		if _, _, err := srv.handleGetCurrentTime(context.Background(), nil, args); err != nil {
+			t.Fatalf("handleGetCurrentTime() warmup[%d] error = %v", i, err)
+		}
+	}
+
+	if _, _, err := srv.handleGetCurrentTime(context.Background(), nil, CurrentTimeArgs{}); err == nil {
+		t.Fatal("handleGetCurrentTime() error = nil, want usage-limit error")
+	} else if !errors.Is(err, ErrToolUsageLimited) {
+		t.Fatalf("handleGetCurrentTime() error = %v, want ErrToolUsageLimited", err)
+	}
+}
+
+func TestHandleGetCurrentTimeSameArgumentRetryLimit(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{
+		AllowPatterns: []string{"get_current_time"},
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	args := CurrentTimeArgs{Timezone: "UTC"}
+	for i := 0; i < defaultMaxSameArgsRetryCalls; i++ {
+		if _, _, err := srv.handleGetCurrentTime(context.Background(), nil, args); err != nil {
+			t.Fatalf("handleGetCurrentTime() warmup[%d] error = %v", i, err)
+		}
+	}
+
+	if _, _, err := srv.handleGetCurrentTime(context.Background(), nil, args); err == nil {
+		t.Fatal("handleGetCurrentTime() error = nil, want same-args usage-limit error")
+	} else if !errors.Is(err, ErrToolUsageLimited) {
+		t.Fatalf("handleGetCurrentTime() error = %v, want ErrToolUsageLimited", err)
 	}
 }

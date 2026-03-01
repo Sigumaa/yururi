@@ -836,7 +836,6 @@ func threadStartParams(input TurnInput, model string, cwd string, reasoningEffor
 		"baseInstructions":       input.BaseInstructions,
 		"developerInstructions":  input.DeveloperInstructions,
 		"ephemeral":              true,
-		"personality":            "friendly",
 		"experimentalRawEvents":  false,
 		"persistExtendedHistory": false,
 	}

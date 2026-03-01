@@ -22,7 +22,8 @@ Discord向け自律エージェント「ゆるり」。
 主な設定キー:
 
 - `discord.guild_id`
-- `discord.target_channel_ids[]`
+- `discord.read_channel_ids[]`
+- `discord.write_channel_ids[]`
 - `discord.observe_channel_ids[]`
 - `discord.observe_category_ids[]`
 - `persona.owner_user_id`
@@ -44,7 +45,7 @@ Discord向け自律エージェント「ゆるり」。
 - `xai.model`
 - `xai.timeout_sec`
 
-`mcp.tool_policy.*` は `*` ワイルドカード対応、大小文字を区別しない。
+`mcp.tool_policy.*` は `*` ワイルドカード対応、大小文字を区別しない。`allow_patterns` が空の場合は既定拒否になる。
 `x_search` を使う場合は `xai.enabled=true` と `xai.api_key` を設定する。
 `twilog-mcp` を使う場合は `codex.mcp_servers.twilog-mcp.bearer_token` を設定できる。`mcp-remote` 利用時は `--header Authorization: Bearer ...` も自動で付与する。`CODEX_MCP_TWILOG_BEARER_TOKEN` も引き続き使え、設定時は環境変数を優先する。
 `discord.observe_category_ids[]` を設定した場合は、カテゴリ配下のテキストチャンネルを起動時に観察対象へ追加する。
