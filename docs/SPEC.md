@@ -17,6 +17,8 @@
 ## 公開インターフェース/型（実装で固定）
 1. `config.yaml`公開キー:
    - `discord.guild_id`
+   - `discord.read_channel_ids[]`
+   - `discord.write_channel_ids[]`
    - `discord.target_channel_ids[]`
    - `discord.observe_channel_ids[]`
    - `discord.observe_category_ids[]`
@@ -133,6 +135,10 @@
 9. 会話本文が永続化されないこと。
 10. `codex --search app-server`起動失敗時のフォールト処理。
 11. `x_search` 呼び出し時の正常系・エラー系。
+12. read/write分離時にread-onlyチャンネルで書き込みが`noop`化されること。
+13. 同一内容投稿の重複抑止（正規化後一致）が動作すること。
+14. Bot自認方針（人間偽装禁止）がプロンプトと出力で維持されること。
+15. MCP allowlist外toolが拒否され、拒否理由がログに残ること。
 
 ## 実装フェーズ
 1. Phase 1: 設定・Discord受信・Codex最小連携・`noop/reply`。
@@ -153,3 +159,12 @@
 2. `thread/start`毎回作成の挙動は段階的に廃止し、チャンネルセッション＋`turn/steer`中心へ移行する。
 3. 4軸Markdown（`YURURI.md`/`SOUL.md`/`MEMORY.md`/`HEARTBEAT.md`）を主記憶として扱う。
 4. 本書と`docs/REARCHITECTURE.md`で差異が出た場合は、`docs/REARCHITECTURE.md`を優先する。
+
+## 追補（2026-03-01 メジャーアップデート方針）
+1. 詳細は`docs/MAJOR_UPDATE.md`を参照し、本追補を実装時の必須要件として扱う。
+2. 会話管理を分離する。`dispatcher`は受信/フィルタ/投入、`orchestrator`は`channel_key`単位セッション制御、`ai runtime`は判断、`gateway`は書き込み実行のみを担当する。
+3. メモリは3層で運用する。`Turn Memory`はターン終了時に破棄、`Session Memory`は会話状態のみ保持、`Persistent Memory`は4軸Markdownのみを保持し会話本文を保存しない。
+4. MCPは最小化する。既定拒否+allowlist方式、1ターンのtool呼び出し上限（既定3回）、同一引数再試行は1回までとする。
+5. チャンネル権限はread/write分離する。`write_channel_ids[]`は`read_channel_ids[]`の部分集合とし、read-onlyチャンネルでの書き込み要求は`noop`に変換する。
+6. Bot自認を固定する。出自・権限確認時はBotであることを明示し、人間偽装や未実施行為の実体験化を禁止する。
+7. 重複抑止を全経路へ適用する。送信前に本文を正規化して重複判定し、重複時は送信せず`noop`+理由ログを出力する。
