@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -24,13 +22,11 @@ import (
 type Server struct {
 	bind            string
 	defaultTimezone string
-	workspaceDir    string
 	toolPolicy      toolPolicy
 	discord         *discordx.Gateway
 	xai             *xai.Client
 	mcpServer       *mcp.Server
 	httpServer      *http.Server
-	docMu           sync.Mutex
 
 	toolUsageMu     sync.Mutex
 	toolUsageBySess map[string]*toolUsageState
@@ -142,21 +138,6 @@ type XSearchResult struct {
 	Model      string         `json:"model,omitempty"`
 }
 
-type WorkspaceDocArgs struct {
-	Name string `json:"name" jsonschema:"YURURI.md/SOUL.md/MEMORY.md/HEARTBEAT.md"`
-}
-
-type WorkspaceDocWriteArgs struct {
-	Name    string `json:"name" jsonschema:"YURURI.md/SOUL.md/MEMORY.md/HEARTBEAT.md"`
-	Content string `json:"content" jsonschema:"書き込む内容"`
-}
-
-type WorkspaceDocResult struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Content string `json:"content"`
-}
-
 const maxMCPToolLogValueLen = 280
 
 const (
@@ -172,17 +153,10 @@ type toolUsageState struct {
 	argumentHit map[string]int
 }
 
-func New(bind string, defaultTimezone string, workspaceDir string, discord *discordx.Gateway, xaiClient *xai.Client, policyOverrides ...config.MCPToolPolicyConfig) (*Server, error) {
+func New(bind string, defaultTimezone string, discord *discordx.Gateway, xaiClient *xai.Client, policyOverrides ...config.MCPToolPolicyConfig) (*Server, error) {
 	bind = strings.TrimSpace(bind)
 	if bind == "" {
 		return nil, errors.New("mcp bind is required")
-	}
-	workspaceDir = strings.TrimSpace(workspaceDir)
-	if workspaceDir == "" {
-		return nil, errors.New("workspace dir is required")
-	}
-	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create workspace dir: %w", err)
 	}
 	if discord == nil {
 		return nil, errors.New("discord gateway is required")
@@ -203,7 +177,6 @@ func New(bind string, defaultTimezone string, workspaceDir string, discord *disc
 	s := &Server{
 		bind:            bind,
 		defaultTimezone: defaultTimezone,
-		workspaceDir:    filepath.Clean(workspaceDir),
 		toolPolicy:      newToolPolicy(policyCfg),
 		discord:         discord,
 		xai:             xaiClient,
@@ -319,21 +292,6 @@ func (s *Server) registerTools() {
 			Description: "xAIのX SearchでX投稿を検索する",
 		}, s.handleXSearch)
 	}
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "read_workspace_doc",
-		Description: "ワークスペースの4軸ドキュメントを読み取る",
-	}, s.handleReadWorkspaceDoc)
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "append_workspace_doc",
-		Description: "ワークスペースの4軸ドキュメントへ追記する",
-	}, s.handleAppendWorkspaceDoc)
-
-	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "replace_workspace_doc",
-		Description: "ワークスペースの4軸ドキュメントを置換する",
-	}, s.handleReplaceWorkspaceDoc)
 }
 
 func (s *Server) handleReadMessageHistory(ctx context.Context, req *mcp.CallToolRequest, args ReadHistoryArgs) (*mcp.CallToolResult, ReadHistoryResult, error) {
@@ -579,129 +537,6 @@ func (s *Server) handleXSearch(ctx context.Context, req *mcp.CallToolRequest, ar
 	}
 	logMCPToolCompleted("x_search", started, out)
 	return nil, out, nil
-}
-
-func (s *Server) handleReadWorkspaceDoc(_ context.Context, req *mcp.CallToolRequest, args WorkspaceDocArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
-	started := logMCPToolStart("read_workspace_doc", args)
-	if err := s.enforceToolPolicy("read_workspace_doc"); err != nil {
-		logMCPToolFailed("read_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, err
-	}
-	if err := s.enforceToolUsage(req, "read_workspace_doc", args); err != nil {
-		logMCPToolFailed("read_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, err
-	}
-	path, err := s.workspaceDocPath(args.Name)
-	if err != nil {
-		logMCPToolFailed("read_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, err
-	}
-
-	s.docMu.Lock()
-	defer s.docMu.Unlock()
-
-	body, err := os.ReadFile(path)
-	if err != nil {
-		logMCPToolFailed("read_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, fmt.Errorf("read workspace doc: %w", err)
-	}
-	result := WorkspaceDocResult{Name: filepath.Base(path), Path: path, Content: string(body)}
-	logMCPToolCompleted("read_workspace_doc", started, result)
-	return nil, result, nil
-}
-
-func (s *Server) handleAppendWorkspaceDoc(_ context.Context, req *mcp.CallToolRequest, args WorkspaceDocWriteArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
-	started := logMCPToolStart("append_workspace_doc", args)
-	if err := s.enforceToolPolicy("append_workspace_doc"); err != nil {
-		logMCPToolFailed("append_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, err
-	}
-	if err := s.enforceToolUsage(req, "append_workspace_doc", args); err != nil {
-		logMCPToolFailed("append_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, err
-	}
-	path, err := s.workspaceDocPath(args.Name)
-	if err != nil {
-		logMCPToolFailed("append_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, err
-	}
-	content := strings.TrimSpace(args.Content)
-	if content == "" {
-		err := errors.New("content is required")
-		logMCPToolFailed("append_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, err
-	}
-
-	s.docMu.Lock()
-	defer s.docMu.Unlock()
-
-	existing, readErr := os.ReadFile(path)
-	if readErr != nil {
-		logMCPToolFailed("append_workspace_doc", started, readErr)
-		return nil, WorkspaceDocResult{}, fmt.Errorf("read workspace doc: %w", readErr)
-	}
-	builder := strings.Builder{}
-	builder.WriteString(string(existing))
-	if !strings.HasSuffix(builder.String(), "\n") {
-		builder.WriteString("\n")
-	}
-	builder.WriteString("\n")
-	builder.WriteString(content)
-	builder.WriteString("\n")
-
-	final := builder.String()
-	if err := os.WriteFile(path, []byte(final), 0o644); err != nil {
-		logMCPToolFailed("append_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, fmt.Errorf("append workspace doc: %w", err)
-	}
-	result := WorkspaceDocResult{Name: filepath.Base(path), Path: path, Content: final}
-	logMCPToolCompleted("append_workspace_doc", started, result)
-	return nil, result, nil
-}
-
-func (s *Server) handleReplaceWorkspaceDoc(_ context.Context, req *mcp.CallToolRequest, args WorkspaceDocWriteArgs) (*mcp.CallToolResult, WorkspaceDocResult, error) {
-	started := logMCPToolStart("replace_workspace_doc", args)
-	if err := s.enforceToolPolicy("replace_workspace_doc"); err != nil {
-		logMCPToolFailed("replace_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, err
-	}
-	if err := s.enforceToolUsage(req, "replace_workspace_doc", args); err != nil {
-		logMCPToolFailed("replace_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, err
-	}
-	path, err := s.workspaceDocPath(args.Name)
-	if err != nil {
-		logMCPToolFailed("replace_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, err
-	}
-	content := strings.TrimSpace(args.Content)
-	if content == "" {
-		err := errors.New("content is required")
-		logMCPToolFailed("replace_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, err
-	}
-
-	s.docMu.Lock()
-	defer s.docMu.Unlock()
-
-	final := content + "\n"
-	if err := os.WriteFile(path, []byte(final), 0o644); err != nil {
-		logMCPToolFailed("replace_workspace_doc", started, err)
-		return nil, WorkspaceDocResult{}, fmt.Errorf("replace workspace doc: %w", err)
-	}
-	result := WorkspaceDocResult{Name: filepath.Base(path), Path: path, Content: final}
-	logMCPToolCompleted("replace_workspace_doc", started, result)
-	return nil, result, nil
-}
-
-func (s *Server) workspaceDocPath(name string) (string, error) {
-	base := strings.TrimSpace(filepath.Base(name))
-	switch base {
-	case "YURURI.md", "SOUL.md", "MEMORY.md", "HEARTBEAT.md":
-		return filepath.Join(s.workspaceDir, base), nil
-	default:
-		return "", fmt.Errorf("unsupported workspace doc: %s", name)
-	}
 }
 
 func (s *Server) enforceToolPolicy(toolName string) error {

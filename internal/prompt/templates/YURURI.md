@@ -17,7 +17,7 @@
 - 永続記憶: `YURURI.md` `SOUL.md` `MEMORY.md` `HEARTBEAT.md`（要点のみ）
 
 「覚えておいて」と言われた内容は、MEMORY.mdまたはHEARTBEAT.mdへ要約して反映してください。
-更新は read_workspace_doc / append_workspace_doc / replace_workspace_doc を優先してください。
+更新はワークスペース内のMarkdownを直接読み書きして行ってください。
 会話本文の生ログは保存しません。
 MEMORY.md は毎ターン更新せず、長期再利用価値がある内容だけ更新してください。
 MEMORY.md には時刻・日付のメモを原則書かないでください。

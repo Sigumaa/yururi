@@ -6,7 +6,7 @@ Discord向け自律エージェント「ゆるり」。
 
 - Codex App Server (`codex --search app-server --listen stdio://`)
 - Discord inbound handler
-- MCP server (`/mcp`) with Discord tools + workspace doc tools + utility tools
+- MCP server (`/mcp`) with Discord tools + utility tools
 - Heartbeat cron runner
 
 ## 必要環境
@@ -76,11 +76,9 @@ go run ./cmd/yururi -config runtime/config.yaml
 - `get_user_detail`
 - `get_current_time`
 - `x_search`
-- `read_workspace_doc`
-- `append_workspace_doc`
-- `replace_workspace_doc`
 
 `send_message` と `reply_message` は既定でURLプレビューを抑制する。
+`YURURI.md` / `SOUL.md` / `MEMORY.md` / `HEARTBEAT.md` はワークスペース内ファイルとして直接読み書きする。
 
 ## 検証
 

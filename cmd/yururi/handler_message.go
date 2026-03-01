@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"strings"
 	"time"
@@ -91,11 +90,6 @@ func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orch
 		return
 	}
 	log.Printf("event=codex_turn_completed run_id=%s message=%s guild=%s channel=%s author=%s status=%s thread=%s turn=%s tool_calls=%d turn_latency_ms=%d", runID, m.ID, m.GuildID, m.ChannelID, authorID, result.Status, result.ThreadID, result.TurnID, len(result.ToolCalls), durationMS(time.Since(turnStarted)))
-	if shouldResetSessionAfterMemoryUpdate(result.ToolCalls) {
-		if coordinator.ResetSession(channelKey) {
-			log.Printf("event=message_session_reset run_id=%s message=%s guild=%s channel=%s reason=memory_doc_updated", runID, m.ID, m.GuildID, m.ChannelID)
-		}
-	}
 	if strings.TrimSpace(result.AssistantText) != "" {
 		log.Printf("event=assistant_text run_id=%s message=%s thread=%s turn=%s text=%q", runID, m.ID, result.ThreadID, result.TurnID, result.AssistantText)
 		logDecisionSummary("message", runID, result.ThreadID, result.TurnID, result.AssistantText)
@@ -190,43 +184,4 @@ func calculateHistoryLimit(mergedCount int) int {
 		limit = maxLimit
 	}
 	return limit
-}
-
-func shouldResetSessionAfterMemoryUpdate(toolCalls []codex.MCPToolCall) bool {
-	for _, toolCall := range toolCalls {
-		if isMemoryReplaceToolCall(toolCall) {
-			return true
-		}
-	}
-	return false
-}
-
-func isMemoryReplaceToolCall(toolCall codex.MCPToolCall) bool {
-	tool := strings.ToLower(strings.TrimSpace(toolCall.Tool))
-	if tool != "replace_workspace_doc" {
-		return false
-	}
-
-	name, ok := workspaceDocNameFromArguments(toolCall.Arguments)
-	if !ok {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(name), "MEMORY.md")
-}
-
-func workspaceDocNameFromArguments(arguments any) (string, bool) {
-	switch value := arguments.(type) {
-	case map[string]any:
-		name, ok := value["name"].(string)
-		return name, ok
-	case string:
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(value), &payload); err != nil {
-			return "", false
-		}
-		name, ok := payload["name"].(string)
-		return name, ok
-	default:
-		return "", false
-	}
 }

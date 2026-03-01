@@ -78,7 +78,7 @@ codex:
 mcp:
   tool_policy:
     allow_patterns: ["read_*"]
-    deny_patterns: ["read_workspace_doc"]
+    deny_patterns: ["read_message_history"]
 `
 	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -87,7 +87,7 @@ mcp:
 	t.Setenv("MCP_BIND", "127.0.0.1:44444")
 	t.Setenv("MCP_URL", "http://127.0.0.1:44444/mcp")
 	t.Setenv("MCP_TOOL_POLICY_ALLOW_PATTERNS", "read_*, get_current_time")
-	t.Setenv("MCP_TOOL_POLICY_DENY_PATTERNS", "replace_workspace_doc")
+	t.Setenv("MCP_TOOL_POLICY_DENY_PATTERNS", "send_message")
 	t.Setenv("DISCORD_READ_CHANNEL_IDS", "read-1,read-2")
 	t.Setenv("DISCORD_WRITE_CHANNEL_IDS", "read-2")
 	t.Setenv("DISCORD_OBSERVE_CHANNEL_IDS", "observe-1,observe-2")
@@ -112,7 +112,7 @@ mcp:
 	if got, want := cfg.MCP.ToolPolicy.AllowPatterns, []string{"read_*", "get_current_time"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("MCP.ToolPolicy.AllowPatterns = %v, want %v", got, want)
 	}
-	if got, want := cfg.MCP.ToolPolicy.DenyPatterns, []string{"replace_workspace_doc"}; len(got) != len(want) || got[0] != want[0] {
+	if got, want := cfg.MCP.ToolPolicy.DenyPatterns, []string{"send_message"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("MCP.ToolPolicy.DenyPatterns = %v, want %v", got, want)
 	}
 	if cfg.Heartbeat.Enabled {
@@ -149,7 +149,7 @@ mcp:
 	if got, want := current.AllowPatterns, []string{"read_*", "get_current_time"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("CurrentMCPToolPolicy().AllowPatterns = %v, want %v", got, want)
 	}
-	if got, want := current.DenyPatterns, []string{"replace_workspace_doc"}; len(got) != len(want) || got[0] != want[0] {
+	if got, want := current.DenyPatterns, []string{"send_message"}; len(got) != len(want) || got[0] != want[0] {
 		t.Fatalf("CurrentMCPToolPolicy().DenyPatterns = %v, want %v", got, want)
 	}
 }

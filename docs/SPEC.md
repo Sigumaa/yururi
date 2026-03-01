@@ -54,7 +54,7 @@
 5. `internal/ai/codex`でapp-server JSON-RPC制御。
 6. `internal/mcp/server`でtoolを登録しCodexから呼ばせる。
 7. `internal/heartbeat`で定期実行しタスク処理。
-8. `workspace`配下の4軸Markdownをtool経由で更新する。
+8. `workspace`配下の4軸Markdownを直接更新する。
 
 ## Tool設計（MCP）
 1. Discord tools:
@@ -68,11 +68,7 @@
    - `get_current_time(timezone?)`（未指定時`Asia/Tokyo`）
    - `x_search(query, allowed_x_handles?, excluded_x_handles?, from_date?, to_date?, enable_image_understanding?, enable_video_understanding?)`
    - `twilog-mcp`（設定済みの場合、ownerのX投稿確認に利用。`codex.mcp_servers.twilog-mcp.bearer_token` でBearer設定可。`mcp-remote` 利用時は認証ヘッダを自動付与）
-3. Workspace doc tools:
-   - `read_workspace_doc`
-   - `append_workspace_doc`
-   - `replace_workspace_doc`
-4. `read_message_history`は複数回呼び出し前提で実装する。
+3. `read_message_history`は複数回呼び出し前提で実装する。
 
 ## 永続メモリ（Markdown）
 1. `workspace/YURURI.md`
@@ -95,7 +91,7 @@
 4. Codex turn開始。
 5. 必要に応じてMCP tool呼び出し。
 6. 最終`DecisionResult`反映。
-7. `replace_workspace_doc`で`MEMORY.md`更新を検知した場合のみ、当該チャンネルのセッションをリセットし次回投稿は新規`thread/start`で開始する。`append_workspace_doc`ではセッションを維持する。
+7. 会話管理はチャンネルセッションを維持し、メモリ更新有無を理由にセッションをリセットしない。
 8. typing停止・メタログ出力。
 9. heartbeat時は`HEARTBEAT.md`の指示に従って必要時のみ行動する。
 10. heartbeat・通常メッセージ実行ログには`assistant_text`、decision要約（parse可否含む）、tool call詳細（server/tool/status/arguments/result）を出力する。
@@ -117,7 +113,7 @@
 1. フィルタ判定（guild/channel/exclude/allowed_bot）。
 2. ownerトーン分岐。
 3. `get_current_time`のtimezone解決。
-4. 4軸Markdown更新（read/append/replace）の正常系。
+4. 4軸Markdown更新（直接読み書き）の正常系。
 5. heartbeat実行時に不要投稿しないこと。
 6. `read_message_history`複数回呼び出し。
 7. `noop`時にDiscord投稿しないこと。
@@ -154,7 +150,7 @@
 1. 詳細は`docs/MAJOR_UPDATE.md`を参照し、本追補を実装時の必須要件として扱う。
 2. 会話管理を分離する。`dispatcher`は受信/フィルタ/投入、`orchestrator`は`channel_key`単位セッション制御、`ai runtime`は判断、`gateway`は書き込み実行のみを担当する。
 3. メモリは3層で運用する。`Turn Memory`はターン終了時に破棄、`Session Memory`は会話状態のみ保持、`Persistent Memory`は4軸Markdownのみを保持し会話本文を保存しない。
-4. MCPは最小化する。allow/deny方式で制御し、1ターンのtool呼び出し上限（既定3回）、同一引数再試行は1回までとする。
+4. MCPは最小化する。workspace内Markdownの読み書きはMCP化しない。allow/deny方式で制御し、1ターンのtool呼び出し上限（既定3回）、同一引数再試行は1回までとする。
 5. チャンネル権限はread/write分離する。`write_channel_ids[]`は`read_channel_ids[]`の部分集合とし、read-onlyチャンネルでの書き込み要求は`noop`に変換する。
 6. Bot自認を固定する。出自・権限確認時はBotであることを明示し、人間偽装や未実施行為の実体験化を禁止する。
 7. 重複抑止を全経路へ適用する。送信前に本文を正規化して重複判定し、重複時は送信せず`noop`+理由ログを出力する。

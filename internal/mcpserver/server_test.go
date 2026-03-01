@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -21,9 +20,7 @@ func allowAllPolicy() config.MCPToolPolicyConfig {
 func TestServerURL(t *testing.T) {
 	t.Parallel()
 
-	workspaceDir := t.TempDir()
-
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, allowAllPolicy())
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", &discordx.Gateway{}, nil, allowAllPolicy())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -35,9 +32,7 @@ func TestServerURL(t *testing.T) {
 func TestHandleGetCurrentTime(t *testing.T) {
 	t.Parallel()
 
-	workspaceDir := t.TempDir()
-
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, allowAllPolicy())
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", &discordx.Gateway{}, nil, allowAllPolicy())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -58,55 +53,25 @@ func TestHandleGetCurrentTime(t *testing.T) {
 	}
 }
 
-func TestWorkspaceDocReadWrite(t *testing.T) {
-	t.Parallel()
-
-	workspaceDir := t.TempDir()
-	seedPath := workspaceDir + "/MEMORY.md"
-	if err := os.WriteFile(seedPath, []byte("# MEMORY.md\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, allowAllPolicy())
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	if _, _, err := srv.handleAppendWorkspaceDoc(context.Background(), nil, WorkspaceDocWriteArgs{
-		Name:    "MEMORY.md",
-		Content: "- user prefers concise answers",
-	}); err != nil {
-		t.Fatalf("handleAppendWorkspaceDoc() error = %v", err)
-	}
-
-	_, got, err := srv.handleReadWorkspaceDoc(context.Background(), nil, WorkspaceDocArgs{Name: "MEMORY.md"})
-	if err != nil {
-		t.Fatalf("handleReadWorkspaceDoc() error = %v", err)
-	}
-	if !strings.Contains(got.Content, "user prefers concise answers") {
-		t.Fatalf("workspace doc content missing appended text: %q", got.Content)
-	}
-}
-
 func TestToolPolicyEvaluateDenyPrecedence(t *testing.T) {
 	t.Parallel()
 
 	policy := newToolPolicy(config.MCPToolPolicyConfig{
 		AllowPatterns: []string{"read_*"},
-		DenyPatterns:  []string{"read_workspace_doc"},
+		DenyPatterns:  []string{"read_message_history"},
 	})
 
-	allowed, reason := policy.evaluate("read_workspace_doc")
+	allowed, reason := policy.evaluate("read_message_history")
 	if allowed {
-		t.Fatal("policy.evaluate(read_workspace_doc) = allowed, want denied")
+		t.Fatal("policy.evaluate(read_message_history) = allowed, want denied")
 	}
-	if !strings.Contains(reason, `matched deny pattern "read_workspace_doc"`) {
+	if !strings.Contains(reason, `matched deny pattern "read_message_history"`) {
 		t.Fatalf("deny reason = %q", reason)
 	}
 
-	allowed, reason = policy.evaluate("read_message_history")
+	allowed, reason = policy.evaluate("read_channel_history")
 	if !allowed {
-		t.Fatalf("policy.evaluate(read_message_history) denied, reason=%q", reason)
+		t.Fatalf("policy.evaluate(read_channel_history) denied, reason=%q", reason)
 	}
 }
 
@@ -117,9 +82,9 @@ func TestToolPolicyEvaluateWildcardCaseInsensitive(t *testing.T) {
 		AllowPatterns: []string{"READ_*", "GET_CURRENT_*"},
 	})
 
-	allowed, reason := policy.evaluate("read_workspace_doc")
+	allowed, reason := policy.evaluate("read_message_history")
 	if !allowed {
-		t.Fatalf("policy.evaluate(read_workspace_doc) denied, reason=%q", reason)
+		t.Fatalf("policy.evaluate(read_message_history) denied, reason=%q", reason)
 	}
 
 	allowed, reason = policy.evaluate("Get_Current_Time")
@@ -140,21 +105,19 @@ func TestToolPolicyEvaluateDefaultAllow(t *testing.T) {
 	t.Parallel()
 
 	policy := newToolPolicy(config.MCPToolPolicyConfig{})
-	allowed, reason := policy.evaluate("read_workspace_doc")
+	allowed, reason := policy.evaluate("send_message")
 	if !allowed {
-		t.Fatalf("policy.evaluate(read_workspace_doc) denied, reason=%q", reason)
+		t.Fatalf("policy.evaluate(send_message) denied, reason=%q", reason)
 	}
 	if reason != "allowed by default" {
-		t.Fatalf("policy.evaluate(read_workspace_doc) reason = %q", reason)
+		t.Fatalf("policy.evaluate(send_message) reason = %q", reason)
 	}
 }
 
 func TestHandleGetCurrentTimeDeniedByPolicy(t *testing.T) {
 	t.Parallel()
 
-	workspaceDir := t.TempDir()
-
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{
 		DenyPatterns: []string{"get_current_*"},
 	})
 	if err != nil {
@@ -187,7 +150,6 @@ func TestHandleXSearchSuccess(t *testing.T) {
 	}))
 	defer xaiServer.Close()
 
-	workspaceDir := t.TempDir()
 	xaiClient := xai.NewClient(xai.Config{
 		BaseURL:    xaiServer.URL,
 		APIKey:     "test-key",
@@ -195,7 +157,7 @@ func TestHandleXSearchSuccess(t *testing.T) {
 		HTTPClient: xaiServer.Client(),
 	})
 
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, xaiClient, allowAllPolicy())
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", &discordx.Gateway{}, xaiClient, allowAllPolicy())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -220,8 +182,7 @@ func TestHandleXSearchSuccess(t *testing.T) {
 func TestHandleXSearchDisabled(t *testing.T) {
 	t.Parallel()
 
-	workspaceDir := t.TempDir()
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, allowAllPolicy())
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", &discordx.Gateway{}, nil, allowAllPolicy())
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -233,8 +194,7 @@ func TestHandleXSearchDisabled(t *testing.T) {
 func TestHandleGetCurrentTimeUsageLimit(t *testing.T) {
 	t.Parallel()
 
-	workspaceDir := t.TempDir()
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{
 		AllowPatterns: []string{"get_current_time"},
 	})
 	if err != nil {
@@ -258,8 +218,7 @@ func TestHandleGetCurrentTimeUsageLimit(t *testing.T) {
 func TestHandleGetCurrentTimeSameArgumentRetryLimit(t *testing.T) {
 	t.Parallel()
 
-	workspaceDir := t.TempDir()
-	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", workspaceDir, &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{
+	srv, err := New("127.0.0.1:39393", "Asia/Tokyo", &discordx.Gateway{}, nil, config.MCPToolPolicyConfig{
 		AllowPatterns: []string{"get_current_time"},
 	})
 	if err != nil {

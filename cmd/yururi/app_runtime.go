@@ -62,7 +62,7 @@ func runApplication(configPath string) error {
 		})
 	}
 
-	mcpSrv, err := mcpserver.New(cfg.MCP.Bind, cfg.Heartbeat.Timezone, cfg.Codex.WorkspaceDir, gateway, xSearchClient)
+	mcpSrv, err := mcpserver.New(cfg.MCP.Bind, cfg.Heartbeat.Timezone, gateway, xSearchClient)
 	if err != nil {
 		return fmt.Errorf("create mcp server: %w", err)
 	}
