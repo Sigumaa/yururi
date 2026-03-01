@@ -54,7 +54,7 @@ func buildAutonomyPrompt(channels []discordx.ChannelInfo) string {
 	lines := []string{
 		prompt.AutonomySystemPrompt,
 		"指定チャンネルを観察し、必要なら send_message / reply_message / add_reaction を使ってよいです。",
-		"返信・times投稿を含むすべての出力で SOUL.md のキャラクターを維持しつつ、文脈と相手に合わせてください。",
+		"すべての出力で SOUL.md のキャラクターを維持しつつ、文脈と相手に合わせてください。",
 		"ownerの最近のX投稿は必要なときだけ twilog-mcp で確認してよいです。",
 	}
 	if len(channels) > 0 {

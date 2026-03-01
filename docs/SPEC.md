@@ -25,8 +25,6 @@
    - `discord.excluded_channel_ids[]`
    - `discord.allowed_bot_user_ids[]`
    - `persona.owner_user_id`
-   - `persona.times_channel_id`
-   - `persona.times_min_interval_sec`
    - `codex.command`（既定: `codex`）
    - `codex.args`（既定: `["--search","app-server","--listen","stdio://"]`）
    - `codex.workspace_dir`
@@ -106,14 +104,14 @@
 9. heartbeat時は`HEARTBEAT.md`の指示に従って必要時のみ行動する。
 10. heartbeat・通常メッセージ・autonomy実行ログには`assistant_text`、decision要約（parse可否含む）、tool call詳細（server/tool/status/arguments/result）を出力する。
 11. MCP server側では各toolについて`mcp_tool_started`/`mcp_tool_completed`/`mcp_tool_failed`を出力し、引数・結果・所要時間を追跡できるようにする。
-12. times投稿はシステムロジックで自動生成しない。必要な投稿はモデルが`send_message`を明示実行して行う。投稿本文の形式は固定しない。
+12. 投稿の自動生成はシステムロジックで行わない。必要な投稿はモデルが`send_message`または`reply_message`を明示実行して行う。
 13. `discord.observe_channel_ids[]` は読み取り専用チャンネルとし、観察・調査対象に含めてよいが直接投稿はしない。
 14. `discord.observe_category_ids[]` が設定されている場合、起動時に該当カテゴリ配下のテキストチャンネル（`GuildText`）を `observe_channel_ids[]` に展開して読み取り対象へ追加する。
 15. `autonomy.enabled`がtrueの場合、通常heartbeatとは別に自律観察ループを実行し、観察可能チャンネルやtwilog-mcpを使った調査を行ってよい。
 16. heartbeat/autonomyの定期実行は固定タイムアウトで打ち切らない。前回実行が継続中の場合のみ次回tickをスキップする。
 17. autonomy実行のプロンプトにはheartbeat専用の定期作業指示を含めない。
-18. autonomy実行時にtimes専用の事前履歴注入は行わない。必要な履歴はモデルが`read_message_history`で取得する。
-19. autonomyにおけるX/twilog参照は必須ではなく、必要なときだけ実施する。times投稿で毎回Xの参照・引用を行う必要はない。
+18. autonomy実行時の事前履歴注入は行わない。必要な履歴はモデルが`read_message_history`で取得する。
+19. autonomyにおけるX/twilog参照は必須ではなく、必要なときだけ実施する。
 20. MEMORY.md は user_id 単位の要約を優先し、時刻・日付などのタイムスタンプ情報は原則記録しない。更新は毎ターン行わず、長期再利用価値がある新事実がある場合のみ実施する。
 
 ## 制約と運用ルール

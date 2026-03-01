@@ -65,12 +65,6 @@ codex:
 	if cfg.XAI.TimeoutSec != 30 {
 		t.Fatalf("XAI.TimeoutSec = %d", cfg.XAI.TimeoutSec)
 	}
-	if cfg.Persona.TimesChannelID != "" {
-		t.Fatalf("Persona.TimesChannelID = %q, want empty", cfg.Persona.TimesChannelID)
-	}
-	if cfg.Persona.TimesMinIntervalS != 0 {
-		t.Fatalf("Persona.TimesMinIntervalS = %d, want 0", cfg.Persona.TimesMinIntervalS)
-	}
 	if len(cfg.Discord.ObserveCategoryIDs) != 0 {
 		t.Fatalf("Discord.ObserveCategoryIDs = %v, want empty", cfg.Discord.ObserveCategoryIDs)
 	}
@@ -112,8 +106,6 @@ mcp:
 	t.Setenv("XAI_BASE_URL", "https://api.x.ai/v1/")
 	t.Setenv("XAI_MODEL", "grok-4-1-fast-non-reasoning")
 	t.Setenv("XAI_TIMEOUT_SEC", "45")
-	t.Setenv("PERSONA_TIMES_CHANNEL_ID", "times-channel")
-	t.Setenv("PERSONA_TIMES_MIN_INTERVAL_SEC", "120")
 
 	cfg, err := Load(cfgPath)
 	if err != nil {
@@ -164,13 +156,6 @@ mcp:
 	if got, want := cfg.Discord.ObserveCategoryIDs, []string{"cat-1", "cat-2"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("Discord.ObserveCategoryIDs = %v, want %v", got, want)
 	}
-	if cfg.Persona.TimesChannelID != "times-channel" {
-		t.Fatalf("Persona.TimesChannelID = %q, want times-channel", cfg.Persona.TimesChannelID)
-	}
-	if cfg.Persona.TimesMinIntervalS != 120 {
-		t.Fatalf("Persona.TimesMinIntervalS = %d, want 120", cfg.Persona.TimesMinIntervalS)
-	}
-
 	current := CurrentMCPToolPolicy()
 	if got, want := current.AllowPatterns, []string{"read_*", "get_current_time"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("CurrentMCPToolPolicy().AllowPatterns = %v, want %v", got, want)

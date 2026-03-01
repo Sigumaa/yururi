@@ -26,8 +26,6 @@ Discord向け自律エージェント「ゆるり」。
 - `discord.observe_channel_ids[]`
 - `discord.observe_category_ids[]`
 - `persona.owner_user_id`
-- `persona.times_channel_id`
-- `persona.times_min_interval_sec`
 - `codex.command`
 - `codex.args`
 - `codex.workspace_dir`
