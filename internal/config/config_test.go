@@ -103,6 +103,51 @@ codex:
 	}
 }
 
+func TestLoadResolvesLegacyRuntimePrefixedPathsWithoutDoubleRuntime(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "runtime")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	cfgPath := filepath.Join(configDir, "config.yaml")
+	body := `discord:
+  token: "token"
+  guild_id: "guild"
+  read_channel_ids: ["channel"]
+  write_channel_ids: ["channel"]
+persona:
+  owner_user_id: "owner"
+codex:
+  command: "codex"
+  args: ["--search", "app-server", "--listen", "stdio://"]
+  workspace_dir: "./runtime/workspace"
+  home_dir: "./runtime/.codex-home"
+`
+	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	wantWorkspace, err := filepath.Abs(filepath.Join(root, "runtime/workspace"))
+	if err != nil {
+		t.Fatalf("Abs(workspace) error = %v", err)
+	}
+	wantHome, err := filepath.Abs(filepath.Join(root, "runtime/.codex-home"))
+	if err != nil {
+		t.Fatalf("Abs(home) error = %v", err)
+	}
+	if cfg.Codex.WorkspaceDir != filepath.Clean(wantWorkspace) {
+		t.Fatalf("Codex.WorkspaceDir = %q, want %q", cfg.Codex.WorkspaceDir, filepath.Clean(wantWorkspace))
+	}
+	if cfg.Codex.HomeDir != filepath.Clean(wantHome) {
+		t.Fatalf("Codex.HomeDir = %q, want %q", cfg.Codex.HomeDir, filepath.Clean(wantHome))
+	}
+}
+
 func TestLoadAppliesEnvOverrides(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")

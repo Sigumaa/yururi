@@ -262,11 +262,24 @@ func resolvePath(baseDir string, rawPath string) string {
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path)
 	}
-	joined := filepath.Join(strings.TrimSpace(baseDir), path)
+	normalized := filepath.Clean(path)
+	normalized = trimLegacyRuntimePrefix(baseDir, normalized)
+	joined := filepath.Join(strings.TrimSpace(baseDir), normalized)
 	if abs, err := filepath.Abs(joined); err == nil {
 		return filepath.Clean(abs)
 	}
 	return filepath.Clean(joined)
+}
+
+func trimLegacyRuntimePrefix(baseDir string, relativePath string) string {
+	if !strings.EqualFold(strings.TrimSpace(filepath.Base(baseDir)), "runtime") {
+		return relativePath
+	}
+	parts := strings.Split(relativePath, string(filepath.Separator))
+	if len(parts) >= 2 && strings.EqualFold(strings.TrimSpace(parts[0]), "runtime") {
+		return filepath.Join(parts[1:]...)
+	}
+	return relativePath
 }
 
 func applyEnvOverrides(cfg *Config) {
