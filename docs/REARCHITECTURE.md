@@ -18,7 +18,7 @@
 3. 初回は`thread/start -> turn/start`、継続は`turn/steer`優先、失敗時は`turn/start`へフォールバックする。
 4. Discordイベント処理は「受信→フィルタ→セッションキュー→コンテキスト構築→Codex実行→tool結果反映→ログ記録」に固定する。
 5. 4軸Markdown(`YURURI.md/SOUL.md/MEMORY.md/HEARTBEAT.md`)のみを永続記憶として扱う。
-6. MCP toolは`allow/deny`プロファイルで制御し、危険操作は既定拒否とする。
+6. MCP toolは`allow/deny`プロファイルで制御し、危険操作はdenyで明示的に遮断する。
 7. 構造化ログに`session_key`、`run_id`、`thread_id`、`turn_id`、`queue_wait_ms`、`turn_latency_ms`、`tool_calls`を必ず出す。
 
 ## 実装フェーズ（再編）

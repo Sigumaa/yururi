@@ -823,7 +823,7 @@ func (p toolPolicy) evaluate(toolName string) (bool, string) {
 		}
 	}
 	if len(p.allowPatterns) == 0 {
-		return false, "allow patterns are empty (default deny)"
+		return true, "allowed by default"
 	}
 	for _, pattern := range p.allowPatterns {
 		if matchToolPattern(pattern, name) {

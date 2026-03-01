@@ -136,15 +136,15 @@ func TestToolPolicyEvaluateWildcardCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestToolPolicyEvaluateDefaultDeny(t *testing.T) {
+func TestToolPolicyEvaluateDefaultAllow(t *testing.T) {
 	t.Parallel()
 
 	policy := newToolPolicy(config.MCPToolPolicyConfig{})
 	allowed, reason := policy.evaluate("read_workspace_doc")
-	if allowed {
-		t.Fatal("policy.evaluate(read_workspace_doc) = allowed, want denied")
+	if !allowed {
+		t.Fatalf("policy.evaluate(read_workspace_doc) denied, reason=%q", reason)
 	}
-	if reason != "allow patterns are empty (default deny)" {
+	if reason != "allowed by default" {
 		t.Fatalf("policy.evaluate(read_workspace_doc) reason = %q", reason)
 	}
 }
