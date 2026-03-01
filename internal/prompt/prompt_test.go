@@ -81,17 +81,8 @@ func TestBuildMessageBundle(t *testing.T) {
 	if !strings.Contains(bundle.DeveloperInstructions, "reply_message または send_message") {
 		t.Fatalf("DeveloperInstructions missing explicit delivery guidance: %q", bundle.DeveloperInstructions)
 	}
-	if !strings.Contains(bundle.DeveloperInstructions, "軽微な追記は append_workspace_doc を優先") {
-		t.Fatalf("DeveloperInstructions missing append priority guidance: %q", bundle.DeveloperInstructions)
-	}
-	if !strings.Contains(bundle.DeveloperInstructions, "要約してMEMORY.md") {
-		t.Fatalf("DeveloperInstructions missing MEMORY summarization guidance: %q", bundle.DeveloperInstructions)
-	}
-	if !strings.Contains(bundle.DeveloperInstructions, "タイムスタンプ情報を原則書かない") {
-		t.Fatalf("DeveloperInstructions missing no timestamp guidance: %q", bundle.DeveloperInstructions)
-	}
-	if !strings.Contains(bundle.DeveloperInstructions, "更新は毎ターン必須ではない") {
-		t.Fatalf("DeveloperInstructions missing sparse update guidance: %q", bundle.DeveloperInstructions)
+	if !strings.Contains(bundle.DeveloperInstructions, "add_reaction") {
+		t.Fatalf("DeveloperInstructions missing reaction guidance: %q", bundle.DeveloperInstructions)
 	}
 	if !strings.Contains(bundle.UserPrompt, "## MEMORY参照（今回の話者関連）") {
 		t.Fatalf("UserPrompt missing memory focus section: %q", bundle.UserPrompt)

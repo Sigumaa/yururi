@@ -33,7 +33,6 @@ type Config struct {
 	Codex     CodexConfig     `yaml:"codex"`
 	MCP       MCPConfig       `yaml:"mcp"`
 	Heartbeat HeartbeatConfig `yaml:"heartbeat"`
-	Autonomy  AutonomyConfig  `yaml:"autonomy"`
 	XAI       XAIConfig       `yaml:"xai"`
 }
 
@@ -96,12 +95,6 @@ type XAIConfig struct {
 	TimeoutSec int    `yaml:"timeout_sec"`
 }
 
-type AutonomyConfig struct {
-	Enabled  bool   `yaml:"enabled"`
-	Cron     string `yaml:"cron"`
-	Timezone string `yaml:"timezone"`
-}
-
 var (
 	currentMCPToolPolicyMu sync.RWMutex
 	currentMCPToolPolicy   MCPToolPolicyConfig
@@ -122,10 +115,6 @@ func Load(path string) (Config, error) {
 			Enabled:  true,
 			Cron:     defaultHeartbeatCron,
 			Timezone: defaultHeartbeatTimezone,
-		},
-		Autonomy: AutonomyConfig{
-			Enabled: false,
-			Cron:    defaultHeartbeatCron,
 		},
 		XAI: XAIConfig{
 			Enabled:    false,
@@ -191,11 +180,6 @@ func (c Config) Validate() error {
 			return errors.New("heartbeat.timezone is required when heartbeat.enabled=true")
 		}
 	}
-	if c.Autonomy.Enabled {
-		if c.Autonomy.Cron == "" {
-			return errors.New("autonomy.cron is required when autonomy.enabled=true")
-		}
-	}
 	if c.XAI.Enabled {
 		if c.XAI.APIKey == "" {
 			return errors.New("xai.api_key is required when xai.enabled=true")
@@ -242,9 +226,6 @@ func (c *Config) normalize() {
 
 	if strings.TrimSpace(c.MCP.URL) == "" {
 		c.MCP.URL = "http://" + c.MCP.Bind + "/mcp"
-	}
-	if strings.TrimSpace(c.Autonomy.Timezone) == "" {
-		c.Autonomy.Timezone = c.Heartbeat.Timezone
 	}
 	if strings.TrimSpace(c.XAI.BaseURL) == "" {
 		c.XAI.BaseURL = defaultXAIBaseURL
@@ -307,11 +288,6 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	applyString("HEARTBEAT_CRON", &cfg.Heartbeat.Cron)
 	applyString("HEARTBEAT_TIMEZONE", &cfg.Heartbeat.Timezone)
-	if v, ok := os.LookupEnv("AUTONOMY_ENABLED"); ok {
-		cfg.Autonomy.Enabled = parseBool(v, cfg.Autonomy.Enabled)
-	}
-	applyString("AUTONOMY_CRON", &cfg.Autonomy.Cron)
-	applyString("AUTONOMY_TIMEZONE", &cfg.Autonomy.Timezone)
 	if v, ok := os.LookupEnv("XAI_ENABLED"); ok {
 		cfg.XAI.Enabled = parseBool(v, cfg.XAI.Enabled)
 	}

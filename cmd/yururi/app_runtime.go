@@ -108,15 +108,6 @@ func runApplication(configPath string) error {
 		}
 		runner.Start(ctx)
 	}
-	if cfg.Autonomy.Enabled {
-		runner, err := heartbeat.NewRunner(cfg.Autonomy.Cron, cfg.Autonomy.Timezone, func(runCtx context.Context) error {
-			return runAutonomyTurn(runCtx, cfg, aiClient, gateway, nextRunID(&runSeq, "auto"))
-		})
-		if err != nil {
-			return fmt.Errorf("init autonomy runner: %w", err)
-		}
-		runner.Start(ctx)
-	}
 
 	log.Printf(
 		"yururi started: mcp_url=%s model=%s reasoning=%s x_search_enabled=%t x_search_model=%s",

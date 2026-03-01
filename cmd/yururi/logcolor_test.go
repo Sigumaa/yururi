@@ -22,7 +22,7 @@ func TestColorForLine(t *testing.T) {
 	}{
 		{
 			name: "failed is red",
-			line: "event=autonomy_turn_failed run_id=a1",
+			line: "event=heartbeat_turn_failed run_id=h1",
 			want: ansiRed,
 		},
 		{

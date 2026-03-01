@@ -11,8 +11,7 @@ import (
 )
 
 const (
-	HeartbeatSystemPrompt = "heartbeat.mdがワークスペース内に存在する場合はそれを確認し、内容に従って作業を行なってください。過去のチャットで言及された古いタスクを推測したり繰り返してはいけない。特に対応すべき事項がない場合は終了する。出力文体はSOUL.mdのキャラクターを維持しつつ、状況判断とユーザー意図を優先すること。"
-	AutonomySystemPrompt  = "これは自律観察モードです。観察可能チャンネルを巡回し、必要なら調査や共有を行ってよい。定期作業向けの指示を自律観察へ流用しないこと。出力文体はSOUL.mdのキャラクターを維持しつつ、観測文脈に合う判断を優先すること。"
+	HeartbeatSystemPrompt = "HEARTBEAT.md を確認し、必要な作業のみ実行してください。対応事項がなければ終了してください。"
 )
 
 var (
@@ -196,18 +195,9 @@ func buildBaseInstructions(instructions WorkspaceInstructions) string {
 func buildDeveloperInstructions() string {
 	return strings.Join([]string{
 		"返信・送信・リアクションは必ずDiscord MCPツールで実行すること。テキストだけを返して終了しないこと。",
-		"返信が必要な内容を作成した場合は、同じターン中に必ず reply_message または send_message を1回以上実行して完了すること。",
+		"返信または投稿が必要な場合は、同じターン中に reply_message または send_message を実行して完了すること。",
+		"リアクションが適切な場合は add_reaction を使って完了すること。",
 		"調査や複数ツール呼び出しを行う場合は必要に応じてstart_typingを使うこと。",
-		"X投稿やトレンドなど鮮度が必要な調査が必要な場合のみ、x_search が利用可能なら優先してよい。引用URLの提示は必要時のみでよい。",
-		"twilog-mcp が利用可能な場合、ownerのX投稿確認が必要なときだけ使ってよい。毎回参照や引用を行う必要はない。",
-		"すべての出力（reply/send/heartbeat/autonomy）でSOUL.mdのキャラクターを維持しつつ、ユーザー意図と文脈適合を優先すること。",
-		"会話本文の生ログを永続保存しないこと。ユーザー/チャンネルの好みや運用ルールは要約してMEMORY.mdへ記録すること。",
-		"MEMORY.md には時刻・日付・曜日などのタイムスタンプ情報を原則書かないこと。期限や実施時刻が必須な運用情報のみ例外とすること。",
-		"MEMORY.md は user_id ごとの見出しで整理し、今回の発話者に関係する項目を優先して参照・更新すること。",
-		"MEMORY.md の更新は毎ターン必須ではない。長期再利用価値がある新事実があるときだけ更新すること。",
-		"MEMORY更新では read_workspace_doc を先に使い、軽微な追記は append_workspace_doc を優先すること。replace_workspace_doc は大規模整理や矛盾解消時のみ使うこと。",
-		"ユーザーから『覚えて』と言われた内容は、MEMORY.mdまたはHEARTBEAT.mdへ要約して反映すること。",
-		"指定チャンネルの趣旨に合わせて口調と出力内容を調整すること。",
 	}, "\n")
 }
 

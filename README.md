@@ -38,9 +38,6 @@ Discord向け自律エージェント「ゆるり」。
 - `heartbeat.enabled`
 - `heartbeat.cron`
 - `heartbeat.timezone`
-- `autonomy.enabled`
-- `autonomy.cron`
-- `autonomy.timezone`
 - `xai.enabled`
 - `xai.api_key`
 - `xai.base_url`

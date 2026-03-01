@@ -31,10 +31,6 @@ heartbeat:
   enabled: true
   cron: "0 */30 * * * *"
   timezone: "Asia/Tokyo"
-autonomy:
-  enabled: false
-  cron: "0 */15 * * * *"
-  timezone: "Asia/Tokyo"
 xai:
   enabled: false
   api_key: ""
