@@ -72,14 +72,13 @@ func runApplication(configPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	var runSeq atomic.Uint64
-	whisperState := &timesWhisperState{}
 
 	dispatcher := dispatch.New(ctx, 128, 1200*time.Millisecond, func(m *discordgo.MessageCreate, meta dispatch.CallbackMetadata) {
 		if meta.MergedCount > 1 {
 			log.Printf("event=channel_burst_coalesced guild=%s channel=%s merged=%d latest_message=%s queue_wait_ms=%d", m.GuildID, m.ChannelID, meta.MergedCount, m.ID, durationMS(meta.QueueWait))
 		}
 		runID := nextRunID(&runSeq, "msg")
-		handleMessage(ctx, cfg, coordinator, gateway, discord, m, meta, whisperState, runID)
+		handleMessage(ctx, cfg, coordinator, gateway, discord, m, meta, runID)
 	})
 
 	errCh := make(chan error, 1)
@@ -102,7 +101,7 @@ func runApplication(configPath string) error {
 
 	if cfg.Heartbeat.Enabled {
 		runner, err := heartbeat.NewRunner(cfg.Heartbeat.Cron, cfg.Heartbeat.Timezone, func(runCtx context.Context) error {
-			return runHeartbeatTurn(runCtx, cfg, aiClient, gateway, whisperState, nextRunID(&runSeq, "hb"))
+			return runHeartbeatTurn(runCtx, cfg, aiClient, nextRunID(&runSeq, "hb"))
 		})
 		if err != nil {
 			return fmt.Errorf("init heartbeat runner: %w", err)
@@ -111,7 +110,7 @@ func runApplication(configPath string) error {
 	}
 	if cfg.Autonomy.Enabled {
 		runner, err := heartbeat.NewRunner(cfg.Autonomy.Cron, cfg.Autonomy.Timezone, func(runCtx context.Context) error {
-			return runAutonomyTurn(runCtx, cfg, aiClient, gateway, whisperState, nextRunID(&runSeq, "auto"))
+			return runAutonomyTurn(runCtx, cfg, aiClient, gateway, nextRunID(&runSeq, "auto"))
 		})
 		if err != nil {
 			return fmt.Errorf("init autonomy runner: %w", err)

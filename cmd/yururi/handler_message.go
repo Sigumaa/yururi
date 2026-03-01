@@ -17,8 +17,7 @@ import (
 	"github.com/sigumaa/yururi/internal/prompt"
 )
 
-func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orchestrator.Coordinator, gateway *discordx.Gateway, session *discordgo.Session, m *discordgo.MessageCreate, meta dispatch.CallbackMetadata, whisperState *timesWhisperState, runID string) {
-	_ = whisperState
+func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orchestrator.Coordinator, gateway *discordx.Gateway, session *discordgo.Session, m *discordgo.MessageCreate, meta dispatch.CallbackMetadata, runID string) {
 	authorID := ""
 	authorIsBot := false
 	authorName := ""
@@ -107,7 +106,6 @@ func handleMessage(rootCtx context.Context, cfg config.Config, coordinator *orch
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=codex_turn_error_detail run_id=%s message=%s err=%s", runID, m.ID, result.ErrorMessage)
 	}
-	log.Printf("event=message_times_skipped run_id=%s message=%s reason=disabled_auto_whisper", runID, m.ID)
 }
 
 func toPromptMessages(messages []discordx.Message) []prompt.RuntimeMessage {

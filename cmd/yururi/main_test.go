@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"math"
 	"strings"
 	"testing"
@@ -54,7 +53,7 @@ func TestRunHeartbeatTurnCallsRuntime(t *testing.T) {
 	}
 	runtime := &heartbeatRuntimeStub{}
 
-	if err := runHeartbeatTurn(context.Background(), cfg, runtime, nil, nil, "hb-test"); err != nil {
+	if err := runHeartbeatTurn(context.Background(), cfg, runtime, "hb-test"); err != nil {
 		t.Fatalf("runHeartbeatTurn() error = %v", err)
 	}
 	if got := len(runtime.calls); got != 1 {
@@ -68,183 +67,15 @@ func TestRunHeartbeatTurnCallsRuntime(t *testing.T) {
 	}
 }
 
-func TestRunHeartbeatTurnDoesNotAutoPostTimesWhisper(t *testing.T) {
-	t.Parallel()
-
-	workspaceDir := t.TempDir()
-	if err := prompt.EnsureWorkspaceInstructionFiles(workspaceDir); err != nil {
-		t.Fatalf("EnsureWorkspaceInstructionFiles() error = %v", err)
-	}
-	cfg := config.Config{
-		Codex: config.CodexConfig{WorkspaceDir: workspaceDir},
-		Persona: config.PersonaConfig{
-			TimesChannelID: "times",
-		},
-	}
-	runtime := &heartbeatRuntimeStub{
-		result: codex.TurnResult{
-			Status:        "completed",
-			AssistantText: "THOUGHT_NOTE_123",
-		},
-	}
-	sender := &heartbeatWhisperSenderStub{}
-
-	if err := runHeartbeatTurn(context.Background(), cfg, runtime, sender, &timesWhisperState{}, "hb-whisper"); err != nil {
-		t.Fatalf("runHeartbeatTurn() error = %v", err)
-	}
-	if len(sender.messages) != 0 {
-		t.Fatalf("times whisper count = %d, want 0", len(sender.messages))
-	}
-}
-
-func TestRunHeartbeatTurnSuppressesTimesWhisperForNoop(t *testing.T) {
-	t.Parallel()
-
-	workspaceDir := t.TempDir()
-	if err := prompt.EnsureWorkspaceInstructionFiles(workspaceDir); err != nil {
-		t.Fatalf("EnsureWorkspaceInstructionFiles() error = %v", err)
-	}
-	cfg := config.Config{
-		Codex: config.CodexConfig{WorkspaceDir: workspaceDir},
-		Persona: config.PersonaConfig{
-			TimesChannelID: "times",
-		},
-	}
-	runtime := &heartbeatRuntimeStub{
-		result: codex.TurnResult{
-			Status:        "completed",
-			AssistantText: `{"action":"noop"}`,
-		},
-	}
-	sender := &heartbeatWhisperSenderStub{}
-
-	if err := runHeartbeatTurn(context.Background(), cfg, runtime, sender, &timesWhisperState{}, "hb-noop"); err != nil {
-		t.Fatalf("runHeartbeatTurn() error = %v", err)
-	}
-	if len(sender.messages) != 0 {
-		t.Fatalf("times whisper count = %d, want 0", len(sender.messages))
-	}
-}
-
-func TestRunHeartbeatTurnIgnoresTimesMinIntervalBecauseAutoWhisperDisabled(t *testing.T) {
-	t.Parallel()
-
-	workspaceDir := t.TempDir()
-	if err := prompt.EnsureWorkspaceInstructionFiles(workspaceDir); err != nil {
-		t.Fatalf("EnsureWorkspaceInstructionFiles() error = %v", err)
-	}
-	cfg := config.Config{
-		Codex: config.CodexConfig{WorkspaceDir: workspaceDir},
-		Persona: config.PersonaConfig{
-			TimesChannelID:    "times",
-			TimesMinIntervalS: 300,
-		},
-	}
-	runtime := &heartbeatRuntimeStub{
-		result: codex.TurnResult{
-			Status:        "completed",
-			AssistantText: "定期チェック完了。今回は様子見します。",
-		},
-	}
-	sender := &heartbeatWhisperSenderStub{}
-	state := &timesWhisperState{}
-
-	if err := runHeartbeatTurn(context.Background(), cfg, runtime, sender, state, "hb-1"); err != nil {
-		t.Fatalf("runHeartbeatTurn() first error = %v", err)
-	}
-	if err := runHeartbeatTurn(context.Background(), cfg, runtime, sender, state, "hb-2"); err != nil {
-		t.Fatalf("runHeartbeatTurn() second error = %v", err)
-	}
-	if len(sender.messages) != 0 {
-		t.Fatalf("times whisper count = %d, want 0", len(sender.messages))
-	}
-}
-
-func TestPostHeartbeatWhisperSuppressesDuplicateRecent(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.Config{
-		Persona: config.PersonaConfig{
-			TimesChannelID: "times",
-		},
-	}
-	sender := &heartbeatWhisperSenderStub{
-		history: []discordx.Message{
-			{Content: "同じ   内容"},
-		},
-	}
-	result := codex.TurnResult{
-		AssistantText: "同じ 内容",
-	}
-
-	if err := postHeartbeatWhisper(context.Background(), cfg, sender, &timesWhisperState{}, "hb-dup", result); err != nil {
-		t.Fatalf("postHeartbeatWhisper() error = %v", err)
-	}
-	if len(sender.messages) != 0 {
-		t.Fatalf("times whisper count = %d, want 0", len(sender.messages))
-	}
-	if sender.readHistoryCalls != 1 {
-		t.Fatalf("read history calls = %d, want 1", sender.readHistoryCalls)
-	}
-}
-
-func TestPostMessageWhisperSuppressesDuplicateRecent(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.Config{
-		Persona: config.PersonaConfig{
-			TimesChannelID: "times",
-		},
-	}
-	sender := &heartbeatWhisperSenderStub{
-		history: []discordx.Message{
-			{Content: "dupe message"},
-		},
-	}
-	result := codex.TurnResult{
-		AssistantText: "dupe message",
-	}
-
-	if err := postMessageWhisper(context.Background(), cfg, sender, &timesWhisperState{}, "msg-dup", nil, result); err != nil {
-		t.Fatalf("postMessageWhisper() error = %v", err)
-	}
-	if len(sender.messages) != 0 {
-		t.Fatalf("times whisper count = %d, want 0", len(sender.messages))
-	}
-}
-
-func TestPostHeartbeatWhisperStillPostsWhenHistoryReadFails(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.Config{
-		Persona: config.PersonaConfig{
-			TimesChannelID: "times",
-		},
-	}
-	sender := &heartbeatWhisperSenderStub{
-		historyErr: errors.New("history failed"),
-	}
-	result := codex.TurnResult{
-		AssistantText: "history failure fallback",
-	}
-
-	if err := postHeartbeatWhisper(context.Background(), cfg, sender, &timesWhisperState{}, "hb-history-err", result); err != nil {
-		t.Fatalf("postHeartbeatWhisper() error = %v", err)
-	}
-	if len(sender.messages) != 1 {
-		t.Fatalf("times whisper count = %d, want 1", len(sender.messages))
-	}
-}
-
 func TestBuildAutonomyPromptDoesNotIncludeHeartbeatPrompt(t *testing.T) {
 	t.Parallel()
 
-	got := buildAutonomyPrompt(nil, "", nil)
+	got := buildAutonomyPrompt(nil)
 	if !strings.Contains(got, prompt.AutonomySystemPrompt) {
 		t.Fatalf("autonomy prompt missing autonomy system prompt: %q", got)
 	}
-	if !strings.Contains(got, "独り言") {
-		t.Fatalf("autonomy prompt should mention monologue style for times: %q", got)
+	if !strings.Contains(got, "必要なら send_message") {
+		t.Fatalf("autonomy prompt should mention generic tool usage: %q", got)
 	}
 	if strings.Contains(got, prompt.HeartbeatSystemPrompt) {
 		t.Fatalf("autonomy prompt should not include heartbeat prompt: %q", got)
@@ -254,136 +85,19 @@ func TestBuildAutonomyPromptDoesNotIncludeHeartbeatPrompt(t *testing.T) {
 	}
 }
 
-func TestBuildAutonomyPromptIncludesObservedChannelsAndTimes(t *testing.T) {
+func TestBuildAutonomyPromptIncludesObservedChannels(t *testing.T) {
 	t.Parallel()
 
 	channels := []discordx.ChannelInfo{
 		{ChannelID: "111", Name: "times-yururi"},
 		{ChannelID: "222", Name: "times-web"},
 	}
-	got := buildAutonomyPrompt(channels, "999", nil)
-	if !strings.Contains(got, "times_channel_id=999") {
-		t.Fatalf("autonomy prompt missing times channel id: %q", got)
-	}
+	got := buildAutonomyPrompt(channels)
 	if !strings.Contains(got, "- times-yururi (111)") {
 		t.Fatalf("autonomy prompt missing first channel: %q", got)
 	}
 	if !strings.Contains(got, "- times-web (222)") {
 		t.Fatalf("autonomy prompt missing second channel: %q", got)
-	}
-}
-
-func TestBuildAutonomyPromptIncludesTimesRecentReference(t *testing.T) {
-	t.Parallel()
-
-	got := buildAutonomyPrompt(nil, "times", []string{"first", "second"})
-	if !strings.Contains(got, "times直近投稿参照") {
-		t.Fatalf("autonomy prompt missing times history section: %q", got)
-	}
-	if !strings.Contains(got, "毎回参照や引用をする必要はありません") {
-		t.Fatalf("autonomy prompt missing optional X reference guidance: %q", got)
-	}
-	if !strings.Contains(got, "- first") || !strings.Contains(got, "- second") {
-		t.Fatalf("autonomy prompt missing times history entries: %q", got)
-	}
-	if !strings.Contains(got, "真似しない") {
-		t.Fatalf("autonomy prompt missing anti-anchor note: %q", got)
-	}
-}
-
-func TestExtractTimesPromptHistory(t *testing.T) {
-	t.Parallel()
-
-	messages := []discordx.Message{
-		{Content: " newest message "},
-		{Content: "   "},
-		{Content: "oldest message"},
-	}
-	got := extractTimesPromptHistory(messages, 8)
-	want := []string{"oldes...", "newes..."}
-	if len(got) != len(want) {
-		t.Fatalf("extractTimesPromptHistory len = %d, want %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("extractTimesPromptHistory[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-func TestBuildMessageWhisperMessage(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name    string
-		result  codex.TurnResult
-		wantOK  bool
-		wantHas string
-	}{
-		{
-			name: "skip when delivery exists",
-			result: codex.TurnResult{
-				ToolCalls:     []codex.MCPToolCall{{Tool: "reply_message"}},
-				AssistantText: "anything",
-			},
-			wantOK: false,
-		},
-		{
-			name: "post plain assistant text",
-			result: codex.TurnResult{
-				AssistantText: "この話題は返信不要だけど自分は賛成です",
-			},
-			wantOK:  true,
-			wantHas: "この話題は返信不要だけど自分は賛成です",
-		},
-		{
-			name: "keep assistant text even when tools exist",
-			result: codex.TurnResult{
-				AssistantText: "👀でリアクションしておいたよ。\nあわせて運用メモを更新した。",
-				ToolCalls: []codex.MCPToolCall{
-					{Tool: "add_reaction", Status: "completed"},
-					{Tool: "append_workspace_doc", Status: "completed"},
-				},
-			},
-			wantOK:  true,
-			wantHas: "👀でリアクションしておいたよ",
-		},
-		{
-			name: "skip noop decision",
-			result: codex.TurnResult{
-				AssistantText: `{"action":"noop"}`,
-			},
-			wantOK: false,
-		},
-		{
-			name: "post error",
-			result: codex.TurnResult{
-				ErrorMessage: "network error",
-			},
-			wantOK: false,
-		},
-		{
-			name: "post operational report as is",
-			result: codex.TurnResult{
-				AssistantText: "completed. executed.",
-			},
-			wantOK:  true,
-			wantHas: "completed. executed.",
-		},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			content, ok := buildMessageWhisperMessage(tc.result)
-			if ok != tc.wantOK {
-				t.Fatalf("buildMessageWhisperMessage() ok = %v, want %v", ok, tc.wantOK)
-			}
-			if tc.wantHas != "" && !strings.Contains(content, tc.wantHas) {
-				t.Fatalf("content = %q, want contains %q", content, tc.wantHas)
-			}
-		})
 	}
 }
 
@@ -429,20 +143,6 @@ func TestTrimLogAny(t *testing.T) {
 	}
 	if got := trimLogAny(math.NaN(), 20); got != "NaN" {
 		t.Fatalf("trimLogAny(NaN, 20) = %q, want %q", got, "NaN")
-	}
-}
-
-func TestSelectPersonaWhisperText(t *testing.T) {
-	t.Parallel()
-
-	if got, ok := selectPersonaWhisperText("  "); ok || got != "" {
-		t.Fatalf("selectPersonaWhisperText(empty) = (%q, %v), want empty/false", got, ok)
-	}
-	if got, ok := selectPersonaWhisperText("completed. executed."); !ok || got != "completed. executed." {
-		t.Fatalf("selectPersonaWhisperText(operational) = (%q, %v), want pass-through", got, ok)
-	}
-	if got, ok := selectPersonaWhisperText("line1\nline2"); !ok || got != "line1\nline2" {
-		t.Fatalf("selectPersonaWhisperText(multiline) = (%q, %v), want pass-through", got, ok)
 	}
 }
 
@@ -617,34 +317,4 @@ func (s *heartbeatRuntimeStub) RunTurn(_ context.Context, input codex.TurnInput)
 		}, nil
 	}
 	return s.result, nil
-}
-
-type heartbeatWhisperSenderStub struct {
-	messages         []whisperMessage
-	history          []discordx.Message
-	historyErr       error
-	readHistoryCalls int
-}
-
-type whisperMessage struct {
-	channelID string
-	content   string
-}
-
-func (s *heartbeatWhisperSenderStub) SendMessage(_ context.Context, channelID string, content string) (string, error) {
-	s.messages = append(s.messages, whisperMessage{
-		channelID: channelID,
-		content:   content,
-	})
-	return "m1", nil
-}
-
-func (s *heartbeatWhisperSenderStub) ReadMessageHistory(_ context.Context, _ string, _ string, _ int) ([]discordx.Message, error) {
-	s.readHistoryCalls++
-	if s.historyErr != nil {
-		return nil, s.historyErr
-	}
-	out := make([]discordx.Message, len(s.history))
-	copy(out, s.history)
-	return out, nil
 }

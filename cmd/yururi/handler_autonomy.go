@@ -13,7 +13,7 @@ import (
 	"github.com/sigumaa/yururi/internal/prompt"
 )
 
-func runAutonomyTurn(ctx context.Context, cfg config.Config, runtime heartbeatRuntime, gateway *discordx.Gateway, whisperState *timesWhisperState, runID string) error {
+func runAutonomyTurn(ctx context.Context, cfg config.Config, runtime heartbeatRuntime, gateway *discordx.Gateway, runID string) error {
 	started := time.Now()
 	log.Printf("event=autonomy_tick run_id=%s", runID)
 
@@ -25,18 +25,7 @@ func runAutonomyTurn(ctx context.Context, cfg config.Config, runtime heartbeatRu
 	if err != nil {
 		log.Printf("event=autonomy_list_channels_failed run_id=%s err=%v", runID, err)
 	}
-	timesChannelID := strings.TrimSpace(cfg.Persona.TimesChannelID)
-	timesRecent := []string(nil)
-	if timesChannelID != "" && gateway != nil {
-		history, historyErr := gateway.ReadMessageHistory(ctx, timesChannelID, "", autonomyTimesHistoryLimit)
-		if historyErr != nil {
-			log.Printf("event=autonomy_times_history_failed run_id=%s channel=%s err=%v", runID, timesChannelID, historyErr)
-		} else {
-			timesRecent = extractTimesPromptHistory(history, autonomyTimesHistoryMaxLen)
-			log.Printf("event=autonomy_times_history_loaded run_id=%s channel=%s messages=%d", runID, timesChannelID, len(timesRecent))
-		}
-	}
-	userPrompt := buildAutonomyPrompt(channels, timesChannelID, timesRecent)
+	userPrompt := buildAutonomyPrompt(channels)
 	bundle := prompt.BuildHeartbeatBundle(instructions)
 	result, err := runtime.RunTurn(ctx, codex.TurnInput{
 		BaseInstructions:      bundle.BaseInstructions,
@@ -58,23 +47,15 @@ func runAutonomyTurn(ctx context.Context, cfg config.Config, runtime heartbeatRu
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=autonomy_turn_error_detail run_id=%s err=%s", runID, result.ErrorMessage)
 	}
-	if err := postHeartbeatWhisper(ctx, cfg, gateway, whisperState, runID, result); err != nil {
-		log.Printf("event=autonomy_times_post_failed run_id=%s err=%v", runID, err)
-	}
 	return nil
 }
 
-func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string, timesRecent []string) string {
+func buildAutonomyPrompt(channels []discordx.ChannelInfo) string {
 	lines := []string{
 		prompt.AutonomySystemPrompt,
-		"指定チャンネルを観察し、返信するほどではないが共有価値のある内容は times チャンネルへ send_message で共有してよいです。",
+		"指定チャンネルを観察し、必要なら send_message / reply_message / add_reaction を使ってよいです。",
 		"返信・times投稿を含むすべての出力で SOUL.md のキャラクターを維持しつつ、文脈と相手に合わせてください。",
-		"times投稿は形式を固定しません。独り言として、思ったことを SOUL.md のペルソナでそのままつぶやいてください。",
-		"times投稿では人に説明する口調や、誰かに話しかける口調は避けてください。",
-		"ownerの最近のX投稿は必要なときだけ twilog-mcp で確認してよいです。毎回参照や引用をする必要はありません。",
-	}
-	if strings.TrimSpace(timesChannelID) != "" {
-		lines = append(lines, "times_channel_id="+strings.TrimSpace(timesChannelID))
+		"ownerの最近のX投稿は必要なときだけ twilog-mcp で確認してよいです。",
 	}
 	if len(channels) > 0 {
 		items := make([]string, 0, len(channels))
@@ -83,26 +64,5 @@ func buildAutonomyPrompt(channels []discordx.ChannelInfo, timesChannelID string,
 		}
 		lines = append(lines, "", "観察可能チャンネル:", strings.Join(items, "\n"))
 	}
-	if len(timesRecent) > 0 {
-		lines = append(lines, "", "times直近投稿参照（重複回避のため。文体や内容を真似しないこと）:")
-		for _, text := range timesRecent {
-			lines = append(lines, "- "+text)
-		}
-	}
 	return strings.Join(lines, "\n")
-}
-
-func extractTimesPromptHistory(messages []discordx.Message, maxLen int) []string {
-	if len(messages) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(messages))
-	for i := len(messages) - 1; i >= 0; i-- {
-		text := trimLogString(messages[i].Content, maxLen)
-		if text == "" {
-			continue
-		}
-		out = append(out, text)
-	}
-	return out
 }

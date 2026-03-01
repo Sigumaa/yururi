@@ -11,9 +11,7 @@ import (
 	"github.com/sigumaa/yururi/internal/prompt"
 )
 
-func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatRuntime, sender heartbeatWhisperSender, whisperState *timesWhisperState, runID string) error {
-	_ = sender
-	_ = whisperState
+func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatRuntime, runID string) error {
 	started := time.Now()
 	log.Printf("event=heartbeat_tick run_id=%s", runID)
 
@@ -42,6 +40,5 @@ func runHeartbeatTurn(ctx context.Context, cfg config.Config, runtime heartbeatR
 	if strings.TrimSpace(result.ErrorMessage) != "" {
 		log.Printf("event=heartbeat_turn_error_detail run_id=%s err=%s", runID, result.ErrorMessage)
 	}
-	log.Printf("event=heartbeat_times_skipped run_id=%s reason=disabled_auto_whisper", runID)
 	return nil
 }
