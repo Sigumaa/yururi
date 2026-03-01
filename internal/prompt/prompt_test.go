@@ -69,6 +69,9 @@ func TestBuildMessageBundle(t *testing.T) {
 	if !strings.Contains(bundle.BaseInstructions, "Discord Bot") {
 		t.Fatalf("BaseInstructions missing bot self-awareness guidance: %q", bundle.BaseInstructions)
 	}
+	if !strings.Contains(bundle.BaseInstructions, "ワークスペース配下のファイルは必要に応じて自由に参照・更新してよい") {
+		t.Fatalf("BaseInstructions missing workspace file freedom guidance: %q", bundle.BaseInstructions)
+	}
 	if !strings.Contains(bundle.UserPrompt, "ゆるり、これ見えてる？") {
 		t.Fatalf("UserPrompt missing current message: %q", bundle.UserPrompt)
 	}
@@ -87,11 +90,11 @@ func TestBuildMessageBundle(t *testing.T) {
 	if !strings.Contains(bundle.DeveloperInstructions, "add_reaction") {
 		t.Fatalf("DeveloperInstructions missing reaction guidance: %q", bundle.DeveloperInstructions)
 	}
-	if !strings.Contains(bundle.UserPrompt, "## MEMORY参照（今回の話者関連）") {
-		t.Fatalf("UserPrompt missing memory focus section: %q", bundle.UserPrompt)
+	if !strings.Contains(bundle.DeveloperInstructions, "MCPを介さず直接読み書きしてよい") {
+		t.Fatalf("DeveloperInstructions missing direct workspace write guidance: %q", bundle.DeveloperInstructions)
 	}
-	if !strings.Contains(bundle.UserPrompt, "user:u1 は長文より短文を好む") {
-		t.Fatalf("UserPrompt missing focused memory line: %q", bundle.UserPrompt)
+	if strings.Contains(bundle.UserPrompt, "## MEMORY参照（今回の話者関連）") {
+		t.Fatalf("UserPrompt should not include memory focus section: %q", bundle.UserPrompt)
 	}
 }
 
@@ -104,30 +107,5 @@ func TestBuildHeartbeatBundle(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(bundle.UserPrompt), "due tasks") {
 		t.Fatalf("heartbeat prompt should not include due tasks section: %q", bundle.UserPrompt)
-	}
-}
-
-func TestExtractMemoryFocusLines(t *testing.T) {
-	t.Parallel()
-
-	memory := strings.Join([]string{
-		"# MEMORY.md",
-		"## Users",
-		"- user:u1 は短文を好む",
-		"- user:u2 は詳細説明を好む",
-		"## Channel",
-		"- channel:times は独り言運用",
-		"- user:u1 は times で絵文字少なめ",
-	}, "\n")
-	got := extractMemoryFocusLines(memory, "u1", "shiyui", 5)
-	if len(got) == 0 {
-		t.Fatal("extractMemoryFocusLines() returned empty, want focused lines")
-	}
-	joined := strings.Join(got, "\n")
-	if !strings.Contains(joined, "user:u1 は短文を好む") {
-		t.Fatalf("extractMemoryFocusLines() missing u1 line: %v", got)
-	}
-	if strings.Contains(joined, "user:u2 は詳細説明を好む") {
-		t.Fatalf("extractMemoryFocusLines() should not include unrelated user line: %v", got)
 	}
 }

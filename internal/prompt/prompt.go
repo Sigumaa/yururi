@@ -121,7 +121,6 @@ func BuildMessageBundle(instructions WorkspaceInstructions, input MessageInput) 
 	if len(recent) > 0 {
 		recentSection = strings.Join(recent, "\n\n")
 	}
-	memoryFocus := buildMemoryFocusSection(instructions, input)
 
 	ownerText := "false"
 	if input.IsOwner {
@@ -142,7 +141,6 @@ func BuildMessageBundle(instructions WorkspaceInstructions, input MessageInput) 
 		"## 今回のメッセージ",
 		"",
 		formatRuntimeMessage(input.Current),
-		memoryFocus,
 	}, "\n")
 
 	return Bundle{
@@ -167,6 +165,7 @@ func buildBaseInstructions(instructions WorkspaceInstructions) string {
 		"常に日本語で応答してください。",
 		"返信・送信・リアクションは必要なときだけ行ってください。",
 		"永続的な記憶は4軸Markdown（YURURI.md / SOUL.md / MEMORY.md / HEARTBEAT.md）だけで管理してください。",
+		"ワークスペース配下のファイルは必要に応じて自由に参照・更新してよい。過度な要約や抽出を固定手順にせず、必要なら原文を直接参照してください。",
 	}
 
 	loaded := make([]string, 0, len(instructions.Content))
@@ -199,6 +198,7 @@ func buildDeveloperInstructions() string {
 		"返信または投稿する場合は、同じターン中に reply_message または send_message を実行すること。",
 		"返信不要で意思表示したい場合は add_reaction を使ってよい。",
 		"調査や複数ツール呼び出しを行う場合は必要に応じて start_typing を使ってよい。",
+		"ワークスペース配下のMarkdown（YURURI.md / SOUL.md / MEMORY.md / HEARTBEAT.md）はMCPを介さず直接読み書きしてよい。必要時は最新状態を読み直して判断すること。",
 	}, "\n")
 }
 
@@ -209,99 +209,6 @@ func formatRuntimeMessage(message RuntimeMessage) string {
 		content = "(empty)"
 	}
 	return meta + "\n" + content
-}
-
-func buildMemoryFocusSection(instructions WorkspaceInstructions, input MessageInput) string {
-	memoryText := strings.TrimSpace(instructions.Content["MEMORY.md"])
-	if memoryText == "" {
-		return ""
-	}
-	lines := extractMemoryFocusLines(memoryText, input.Current.AuthorID, input.Current.AuthorName, 12)
-	if len(lines) == 0 {
-		return ""
-	}
-	return "\n## MEMORY参照（今回の話者関連）\n\n" + strings.Join(lines, "\n")
-}
-
-func extractMemoryFocusLines(memoryText string, authorID string, authorName string, maxLines int) []string {
-	text := strings.TrimSpace(memoryText)
-	if text == "" || maxLines <= 0 {
-		return nil
-	}
-	keys := uniqueMemoryFocusKeys(authorID, authorName)
-	if len(keys) == 0 {
-		return nil
-	}
-	source := strings.Split(text, "\n")
-	out := make([]string, 0, maxLines)
-	seen := map[string]struct{}{}
-	for i := 0; i < len(source) && len(out) < maxLines; i++ {
-		line := strings.TrimSpace(source[i])
-		if line == "" || !lineContainsAnyFold(line, keys) {
-			continue
-		}
-		if header, ok := nearestSectionHeader(source, i); ok {
-			key := "header:" + header
-			if _, exists := seen[key]; !exists && len(out) < maxLines {
-				seen[key] = struct{}{}
-				out = append(out, header)
-			}
-		}
-		key := "line:" + line
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, line)
-	}
-	return out
-}
-
-func uniqueMemoryFocusKeys(authorID string, authorName string) []string {
-	keys := make([]string, 0, 2)
-	seen := map[string]struct{}{}
-	for _, raw := range []string{authorID, authorName} {
-		trimmed := strings.TrimSpace(raw)
-		if trimmed == "" {
-			continue
-		}
-		lowered := strings.ToLower(trimmed)
-		if _, ok := seen[lowered]; ok {
-			continue
-		}
-		seen[lowered] = struct{}{}
-		keys = append(keys, lowered)
-	}
-	return keys
-}
-
-func lineContainsAnyFold(line string, keys []string) bool {
-	lowered := strings.ToLower(strings.TrimSpace(line))
-	if lowered == "" {
-		return false
-	}
-	for _, key := range keys {
-		if key != "" && strings.Contains(lowered, key) {
-			return true
-		}
-	}
-	return false
-}
-
-func nearestSectionHeader(lines []string, index int) (string, bool) {
-	if len(lines) == 0 || index <= 0 {
-		return "", false
-	}
-	for i := index - 1; i >= 0; i-- {
-		header := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(header, "#") {
-			return header, true
-		}
-		if header != "" && !strings.HasPrefix(header, "-") && !strings.HasPrefix(header, "*") {
-			break
-		}
-	}
-	return "", false
 }
 
 func valueOrFallback(value string, fallback string) string {
