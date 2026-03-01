@@ -134,7 +134,7 @@ func Load(path string) (Config, error) {
 	}
 
 	applyEnvOverrides(&cfg)
-	cfg.normalize()
+	cfg.normalize(filepath.Dir(path))
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -192,7 +192,7 @@ func (c Config) Validate() error {
 	return nil
 }
 
-func (c *Config) normalize() {
+func (c *Config) normalize(configBaseDir string) {
 	if c.Codex.WorkspaceDir == "" {
 		c.Codex.WorkspaceDir = c.Codex.CWD
 	}
@@ -201,10 +201,10 @@ func (c *Config) normalize() {
 	}
 
 	if c.Codex.WorkspaceDir != "" {
-		c.Codex.WorkspaceDir = filepath.Clean(c.Codex.WorkspaceDir)
+		c.Codex.WorkspaceDir = resolvePath(configBaseDir, c.Codex.WorkspaceDir)
 	}
 	if c.Codex.HomeDir != "" {
-		c.Codex.HomeDir = filepath.Clean(c.Codex.HomeDir)
+		c.Codex.HomeDir = resolvePath(configBaseDir, c.Codex.HomeDir)
 	}
 	for name, server := range c.Codex.MCPServers {
 		normalized := CodexMCPServerConfig{
@@ -252,6 +252,21 @@ func (c *Config) normalize() {
 	c.Discord.AllowedBotUserIDs = cleanList(c.Discord.AllowedBotUserIDs)
 	c.MCP.ToolPolicy.AllowPatterns = cleanList(c.MCP.ToolPolicy.AllowPatterns)
 	c.MCP.ToolPolicy.DenyPatterns = cleanList(c.MCP.ToolPolicy.DenyPatterns)
+}
+
+func resolvePath(baseDir string, rawPath string) string {
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		return ""
+	}
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	joined := filepath.Join(strings.TrimSpace(baseDir), path)
+	if abs, err := filepath.Abs(joined); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(joined)
 }
 
 func applyEnvOverrides(cfg *Config) {
