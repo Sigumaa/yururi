@@ -36,6 +36,21 @@ func TestNormalizeMethod(t *testing.T) {
 	}
 }
 
+func TestPickOptionLabelPrefersPositiveChoice(t *testing.T) {
+	t.Parallel()
+
+	question := map[string]any{
+		"id": "q1",
+		"options": []any{
+			map[string]any{"label": "Decline"},
+			map[string]any{"label": "Accept"},
+		},
+	}
+	if got := pickOptionLabel(question); got != "Accept" {
+		t.Fatalf("pickOptionLabel() = %q, want Accept", got)
+	}
+}
+
 func TestThreadStartParamsIncludesMCPConfig(t *testing.T) {
 	t.Parallel()
 
@@ -165,6 +180,36 @@ func TestRunTurnHandlesUserInputRequest(t *testing.T) {
 		BaseInstructions:      "base",
 		DeveloperInstructions: "dev",
 		UserPrompt:            "test",
+	})
+	if err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
+	}
+	if got.Status != "completed" {
+		t.Fatalf("RunTurn() status = %q, want completed", got.Status)
+	}
+}
+
+func TestRunTurnHandlesApprovalRequest(t *testing.T) {
+	t.Setenv("YURURI_MOCK_CODEX_HELPER", "1")
+	workspaceDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	client := NewClient(config.CodexConfig{
+		Command:         os.Args[0],
+		Args:            []string{"-test.run=^TestMockCodexProcess$", "--", "approval-request"},
+		Model:           "gpt-5.3-codex",
+		ReasoningEffort: "medium",
+		WorkspaceDir:    workspaceDir,
+		HomeDir:         homeDir,
+	}, "http://127.0.0.1:39393/mcp")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	got, err := client.RunTurn(ctx, TurnInput{
+		BaseInstructions:      "base",
+		DeveloperInstructions: "dev",
+		UserPrompt:            "approval",
 	})
 	if err != nil {
 		t.Fatalf("RunTurn() error = %v", err)
@@ -316,6 +361,8 @@ func TestMockCodexProcess(t *testing.T) {
 		runMockAssistantTextScenario(t, dec, enc)
 	case "user-input-request":
 		runMockUserInputRequestScenario(t, dec, enc)
+	case "approval-request":
+		runMockApprovalRequestScenario(t, dec, enc)
 	case "split-start-steer":
 		runMockSplitStartSteerScenario(t, dec, enc)
 	default:
@@ -367,8 +414,30 @@ func runMockUserInputRequestScenario(t *testing.T, dec *json.Decoder, enc *json.
 	if !ok || len(answerList) == 0 {
 		t.Fatalf("request response answers list missing: %#v", q1Raw)
 	}
-	if answerList[0] != "Decline" {
-		t.Fatalf("request response answer = %#v, want Decline", answerList[0])
+	if answerList[0] != "Accept" {
+		t.Fatalf("request response answer = %#v, want Accept", answerList[0])
+	}
+
+	writeMockNotification(t, enc, "turn/completed", map[string]any{
+		"turn": map[string]any{"id": "turn-1", "status": "completed"},
+	})
+}
+
+func runMockApprovalRequestScenario(t *testing.T, dec *json.Decoder, enc *json.Encoder) {
+	t.Helper()
+
+	expectMockThreadStart(t, dec, enc)
+	expectMockTurnStart(t, dec, enc, turnRequestID, "thread-1", "approval", "turn-1")
+
+	writeMockRequestFromServer(t, enc, json.RawMessage(`61`), "item/commandExecution/requestApproval", map[string]any{})
+
+	resp := readRawMessage(t, dec)
+	if strings.TrimSpace(string(resp.ID)) != "61" {
+		t.Fatalf("approval response id = %s, want 61", string(resp.ID))
+	}
+	result := decodeNotificationParams(resp.Result)
+	if decision, _ := result["decision"].(string); decision != "approve" {
+		t.Fatalf("approval response decision = %#v, want approve", result["decision"])
 	}
 
 	writeMockNotification(t, enc, "turn/completed", map[string]any{

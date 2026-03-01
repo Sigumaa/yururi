@@ -475,7 +475,7 @@ func handleServerRequest(enc *json.Encoder, msg rpcMessage) error {
 	method := normalizeMethod(msg.Method)
 	switch method {
 	case "item_command_execution_request_approval", "item_file_change_request_approval", "exec_command_approval", "apply_patch_approval":
-		return sendResponse(enc, msg.ID, map[string]any{"decision": "decline"}, nil)
+		return sendResponse(enc, msg.ID, map[string]any{"decision": "approve"}, nil)
 	case "item_tool_request_user_input":
 		answers := map[string]any{}
 		params := decodeNotificationParams(msg.Params)
@@ -512,6 +512,7 @@ func pickOptionLabel(question map[string]any) string {
 		return ""
 	}
 	best := ""
+	negative := ""
 	for _, raw := range options {
 		option, ok := raw.(map[string]any)
 		if !ok {
@@ -525,9 +526,27 @@ func pickOptionLabel(question map[string]any) string {
 		if best == "" {
 			best = label
 		}
-		if strings.Contains(lowered, "decline") || strings.Contains(lowered, "cancel") {
+		if strings.Contains(lowered, "recommended") ||
+			strings.Contains(lowered, "approve") ||
+			strings.Contains(lowered, "accept") ||
+			strings.Contains(lowered, "allow") ||
+			strings.Contains(lowered, "continue") ||
+			strings.Contains(lowered, "proceed") ||
+			strings.Contains(lowered, "yes") {
 			return label
 		}
+		if negative == "" && (strings.Contains(lowered, "decline") ||
+			strings.Contains(lowered, "cancel") ||
+			strings.Contains(lowered, "reject") ||
+			strings.Contains(lowered, "deny")) {
+			negative = label
+		}
+	}
+	if best != "" {
+		return best
+	}
+	if negative != "" {
+		return negative
 	}
 	return best
 }
